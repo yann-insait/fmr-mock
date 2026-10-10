@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: fmr-mock
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: MOCK_API_KEY
+        generateValue: true
+      - key: FMR_STATUS_IN_HTTP
+        value: "true"
+      - key: RTOKEN_TTL_SECONDS
+        value: "600"
+      - key: MAX_VERIFY_ATTEMPTS
+        value: "3"
