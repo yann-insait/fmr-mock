@@ -83,13 +83,14 @@ def test_action_requires_verification():
     assert c.post("/ResetPassword", json=auth(t, UserId="771")).status_code == 409
 
 
-def test_refresh_after_expiry():
+def test_tokens_do_not_expire():
     t = login()
-    c.post(f"/mock/expire/{t['RequestID']}")
-    assert c.post("/AccountVerification", json=auth(t, Account="001234")).json()["Error"] == "TOKEN_EXPIRED"
-    r = c.post("/ValidateExToken", json={"RefreshToken": t["RefreshToken"]}).json()
-    assert r["RequestID"] == t["RequestID"]
-    assert c.post("/AccountVerification", json={"RequestID": r["RequestID"], "RToken": r["RToken"], "Account": "001234"}).status_code == 200
+    assert "ExpiresIn" not in t and "RefreshToken" not in t
+
+
+def test_validate_requires_both_fields():
+    r = c.post("/ValidateExToken", json={"ExSessionID": "g"})
+    assert r.status_code == 400 and "MToken" in r.json()["Fields"]
 
 
 def test_missing_fields_400():
@@ -103,3 +104,17 @@ def test_status_in_body_mode(monkeypatch):
     c.post("/AccountVerification", json=auth(t, Account="067890"))
     r = c.post("/ResetPassword", json=auth(t, UserId="552"))
     assert r.status_code == 200 and r.json()["Status"] == 436
+
+
+def test_api_key(monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "secret")
+    assert c.get("/health").status_code == 200
+    assert c.post("/ValidateExToken", json={"ExSessionID": "g", "MToken": "x"}).status_code == 401
+    r = c.post("/ValidateExToken", json={"ExSessionID": "g", "MToken": "x"}, headers={"X-API-Key": "secret"})
+    assert r.status_code == 200
+
+
+def test_openapi_has_security_and_examples():
+    spec = c.get("/openapi.json").json()
+    assert "APIKeyHeader" in spec["components"]["securitySchemes"]
+    assert "436" in spec["paths"]["/ResetPassword"]["post"]["responses"]

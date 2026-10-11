@@ -37,7 +37,6 @@ The repo includes `render.yaml`, so Render sets everything up from it.
 | Env var | Default | Purpose |
 |---|---|---|
 | `MOCK_API_KEY` | *(empty)* | If set, every request (except `/health`) needs header `X-API-Key`. Set it when deployed publicly. |
-| `RTOKEN_TTL_SECONDS` | `600` | RToken lifetime. |
 | `MAX_VERIFY_ATTEMPTS` | `3` | Wrong account numbers allowed per RequestID before `423`. |
 | `FMR_STATUS_IN_HTTP` | `true` | `true`: HTTP status = FMR status (210, 436…). `false`: always HTTP 200, status only in body `Status`. Use `false` if the agent's tool treats non-2xx as a failure. |
 | `ACCOUNTS_FILE` | `app/data/accounts.json` | Mock accounts. |
@@ -49,19 +48,11 @@ All `POST`, JSON body. Every response includes `Status`.
 
 ### `POST /ValidateExToken`
 
-Initial call:
-
 ```json
 { "ExSessionID": "<GUID>", "MToken": "eyJ..." }
 ```
 
-Refresh (instead of the above):
-
-```json
-{ "RefreshToken": "<from first call>" }
-```
-
-→ `200` `{ "RequestID", "RToken", "RefreshToken", "ExpiresIn" }`
+→ `200` `{ "RequestID", "RToken" }`. Tokens don't expire; they last until the service restarts.
 
 Any MToken works, except `invalid` or `expired` → `401 INVALID_MTOKEN`.
 
@@ -92,7 +83,7 @@ Any MToken works, except `invalid` or `expired` → `401 INVALID_MTOKEN`.
 | 209 | — | RecoverUserID success |
 | 210 | — | ResetPassword success |
 | 400 | `BAD_REQUEST` / `INVALID_ACCOUNT_FORMAT` | Missing fields; account not exactly 6 digits (doesn't use an attempt) |
-| 401 | `INVALID_MTOKEN` / `INVALID_TOKEN` / `TOKEN_EXPIRED` / `INVALID_REFRESH_TOKEN` | Auth problems |
+| 401 | `INVALID_MTOKEN` / `INVALID_TOKEN` | Auth problems |
 | 404 | `ACCOUNT_NOT_FOUND` | Unknown account (uses an attempt; `AttemptsLeft` returned) |
 | 404 | `CARD_NOT_FOUND` | `UserId` isn't a card on the verified account |
 | 409 | `ACCOUNT_NOT_VERIFIED` | Action called before AccountVerification |
@@ -122,7 +113,6 @@ Edit `app/data/accounts.json` to add more.
 | `GET /health` | Health check (no API key needed) |
 | `GET /mock/accounts` | List test accounts |
 | `GET /mock/outbox` | SMS/emails "sent" so far |
-| `POST /mock/expire/{RequestID}` | Expire an RToken to test refresh |
 | `POST /mock/reset` | Clear sessions, outbox and reload accounts |
 
 State is in memory: restarting the service clears all sessions.

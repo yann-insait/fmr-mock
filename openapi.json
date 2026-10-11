@@ -1,0 +1,927 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FMR Mock API",
+    "description": "\nMock of the **FMR** APIs used by the Meitav Trade agent for **password reset** and **username recovery**.\n\n**Authorize first:** click **Authorize** and paste the API key (`MOCK_API_KEY`).\n\n### Flow\n1. `ValidateExToken`: get `RequestID` + `RToken`\n2. `AccountVerification`: verify the 6-digit trade account, get the cards\n3. `ResetPassword` (→ 210, SMS) or `RecoverUserID` (→ 209, email) with `UserId` = card's last 3 digits\n\n### Test accounts\n| Account | Cards | Result |\n|---|---|---|\n| `001234` | 771 | Happy path (one card) |\n| `012345` | 025, 418 | Two cards: customer picks |\n| `054321` | 309 | RecoverUserID → **427** (no email) |\n| `067890` | 552 (inactive), 860 | 552 → **436** |\n| `098765` | 144 | TIK = Y (managed account) |\n| any other | – | **404**, 3 attempts then **423** |\n\n### Status codes\nBy default the HTTP status equals the FMR `Status` (e.g. 210, 436). If the server runs with\n`FMR_STATUS_IN_HTTP=false`, every response is HTTP 200 and the code is only in `Status`.\n\nOnly **209, 210, 427, 436** come from the spec; other error codes are placeholders until FMR confirms them.\n",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Mock helpers"
+        ],
+        "summary": "Health check (no API key)",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ValidateExToken": {
+      "post": {
+        "tags": [
+          "FMR"
+        ],
+        "summary": "Validate the MToken and open an FMR session",
+        "description": "Returns the RequestID + RToken used on every later call. They don't expire.",
+        "operationId": "validate_ex_token_ValidateExToken_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateExTokenIn"
+              },
+              "examples": {
+                "success": {
+                  "summary": "Successful validation",
+                  "value": {
+                    "ExSessionID": "test-1",
+                    "MToken": "eyJ.mock"
+                  }
+                },
+                "failed": {
+                  "summary": "Failed login (401)",
+                  "value": {
+                    "ExSessionID": "test-1",
+                    "MToken": "invalid"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 400,
+                  "Error": "BAD_REQUEST",
+                  "Message": "Invalid or missing fields",
+                  "Fields": [
+                    "RToken"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_MTOKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 401,
+                  "Error": "INVALID_MTOKEN",
+                  "Message": "MToken rejected (invalid)"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/AccountVerification": {
+      "post": {
+        "tags": [
+          "FMR"
+        ],
+        "summary": "Verify the trade account and return its cards",
+        "operationId": "account_verification_AccountVerification_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountVerificationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Account verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_ACCOUNT_FORMAT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 400,
+                  "Error": "INVALID_ACCOUNT_FORMAT",
+                  "Message": "Account must be exactly 6 digits"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_TOKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 401,
+                  "Error": "INVALID_TOKEN",
+                  "Message": "RequestID/RToken not recognised"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ACCOUNT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 404,
+                  "Error": "ACCOUNT_NOT_FOUND",
+                  "Message": "Account does not match the authenticated customer",
+                  "AttemptsLeft": 2
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "TOO_MANY_ATTEMPTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 423,
+                  "Error": "TOO_MANY_ATTEMPTS",
+                  "Message": "Maximum verification attempts reached",
+                  "AttemptsLeft": 0
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/ResetPassword": {
+      "post": {
+        "tags": [
+          "FMR"
+        ],
+        "summary": "Send the password-reset SMS",
+        "operationId": "reset_password_ResetPassword_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "210": {
+            "description": "SMS sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOut"
+                },
+                "example": {
+                  "Status": 210,
+                  "Message": "Password reset SMS sent to the verified phone number"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 400,
+                  "Error": "BAD_REQUEST",
+                  "Message": "Invalid or missing fields",
+                  "Fields": [
+                    "RToken"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_TOKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 401,
+                  "Error": "INVALID_TOKEN",
+                  "Message": "RequestID/RToken not recognised"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CARD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 404,
+                  "Error": "CARD_NOT_FOUND",
+                  "Message": "UserId does not match a card on this account"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ACCOUNT_NOT_VERIFIED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 409,
+                  "Error": "ACCOUNT_NOT_VERIFIED",
+                  "Message": "Call AccountVerification first"
+                }
+              }
+            }
+          },
+          "436": {
+            "description": "CARD_NOT_ACTIVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 436,
+                  "Error": "CARD_NOT_ACTIVE",
+                  "Message": "Selected card is not active"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/RecoverUserID": {
+      "post": {
+        "tags": [
+          "FMR"
+        ],
+        "summary": "Send the username-recovery email",
+        "operationId": "recover_user_id_RecoverUserID_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "209": {
+            "description": "Email sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOut"
+                },
+                "example": {
+                  "Status": 209,
+                  "Message": "Username recovery email sent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 400,
+                  "Error": "BAD_REQUEST",
+                  "Message": "Invalid or missing fields",
+                  "Fields": [
+                    "RToken"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_TOKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 401,
+                  "Error": "INVALID_TOKEN",
+                  "Message": "RequestID/RToken not recognised"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CARD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 404,
+                  "Error": "CARD_NOT_FOUND",
+                  "Message": "UserId does not match a card on this account"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ACCOUNT_NOT_VERIFIED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 409,
+                  "Error": "ACCOUNT_NOT_VERIFIED",
+                  "Message": "Call AccountVerification first"
+                }
+              }
+            }
+          },
+          "427": {
+            "description": "NO_EMAIL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 427,
+                  "Error": "NO_EMAIL",
+                  "Message": "No email on account; username cannot be sent"
+                }
+              }
+            }
+          },
+          "436": {
+            "description": "CARD_NOT_ACTIVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 436,
+                  "Error": "CARD_NOT_ACTIVE",
+                  "Message": "Selected card is not active"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/mock/accounts": {
+      "get": {
+        "tags": [
+          "Mock helpers"
+        ],
+        "summary": "List test accounts",
+        "operationId": "mock_accounts_mock_accounts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Mock Accounts Mock Accounts Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/mock/outbox": {
+      "get": {
+        "tags": [
+          "Mock helpers"
+        ],
+        "summary": "SMS / emails sent so far",
+        "operationId": "mock_outbox_mock_outbox_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Mock Outbox Mock Outbox Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/mock/reset": {
+      "post": {
+        "tags": [
+          "Mock helpers"
+        ],
+        "summary": "Clear sessions and outbox",
+        "operationId": "mock_reset_mock_reset_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Mock Reset Mock Reset Post"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountVerificationIn": {
+        "properties": {
+          "RequestID": {
+            "type": "string",
+            "title": "Requestid",
+            "description": "From ValidateExToken"
+          },
+          "RToken": {
+            "type": "string",
+            "title": "Rtoken",
+            "description": "From ValidateExToken"
+          },
+          "Account": {
+            "type": "string",
+            "title": "Account",
+            "description": "Trade account number, exactly 6 digits (pad with leading zeros)",
+            "examples": [
+              "012345"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "RequestID",
+          "RToken",
+          "Account"
+        ],
+        "title": "AccountVerificationIn"
+      },
+      "ActionIn": {
+        "properties": {
+          "RequestID": {
+            "type": "string",
+            "title": "Requestid",
+            "description": "From ValidateExToken"
+          },
+          "RToken": {
+            "type": "string",
+            "title": "Rtoken",
+            "description": "From ValidateExToken"
+          },
+          "UserId": {
+            "type": "string",
+            "title": "Userid",
+            "description": "Last 3 digits of the selected card",
+            "examples": [
+              "418"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "RequestID",
+          "RToken",
+          "UserId"
+        ],
+        "title": "ActionIn"
+      },
+      "ActionOut": {
+        "properties": {
+          "Status": {
+            "type": "integer",
+            "title": "Status"
+          },
+          "Message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "Status",
+          "Message"
+        ],
+        "title": "ActionOut"
+      },
+      "CardOut": {
+        "properties": {
+          "Last3": {
+            "type": "string",
+            "title": "Last3"
+          },
+          "PermissionCode": {
+            "type": "string",
+            "title": "Permissioncode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "Last3",
+          "PermissionCode"
+        ],
+        "title": "CardOut"
+      },
+      "ErrorOut": {
+        "properties": {
+          "Status": {
+            "type": "integer",
+            "title": "Status"
+          },
+          "Error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "Message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "AttemptsLeft": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attemptsleft"
+          },
+          "Fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fields"
+          }
+        },
+        "type": "object",
+        "required": [
+          "Status",
+          "Error",
+          "Message"
+        ],
+        "title": "ErrorOut"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "TokenOut": {
+        "properties": {
+          "Status": {
+            "type": "integer",
+            "title": "Status",
+            "default": 200,
+            "examples": [
+              200
+            ]
+          },
+          "RequestID": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "RToken": {
+            "type": "string",
+            "title": "Rtoken"
+          }
+        },
+        "type": "object",
+        "required": [
+          "RequestID",
+          "RToken"
+        ],
+        "title": "TokenOut"
+      },
+      "ValidateExTokenIn": {
+        "properties": {
+          "ExSessionID": {
+            "type": "string",
+            "title": "Exsessionid",
+            "description": "GUID Meitav sends with the MToken"
+          },
+          "MToken": {
+            "type": "string",
+            "title": "Mtoken",
+            "description": "JWT Meitav created after authenticating the customer. Any value works; `invalid` or `expired` simulate a failed login."
+          }
+        },
+        "type": "object",
+        "required": [
+          "ExSessionID",
+          "MToken"
+        ],
+        "title": "ValidateExTokenIn"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerificationOut": {
+        "properties": {
+          "Status": {
+            "type": "integer",
+            "title": "Status",
+            "default": 200,
+            "examples": [
+              200
+            ]
+          },
+          "Cards": {
+            "items": {
+              "$ref": "#/components/schemas/CardOut"
+            },
+            "type": "array",
+            "title": "Cards"
+          },
+          "Email": {
+            "type": "string",
+            "title": "Email",
+            "description": "Y/N: account has an email address"
+          },
+          "TIK": {
+            "type": "string",
+            "title": "Tik",
+            "description": "Y/N: IRA / managed account"
+          },
+          "FirstName": {
+            "type": "string",
+            "title": "Firstname"
+          },
+          "LastName": {
+            "type": "string",
+            "title": "Lastname"
+          }
+        },
+        "type": "object",
+        "required": [
+          "Cards",
+          "Email",
+          "TIK",
+          "FirstName",
+          "LastName"
+        ],
+        "title": "VerificationOut"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "description": "Value of `MOCK_API_KEY` (Render → Environment).",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "FMR",
+      "description": "Mocked FMR endpoints"
+    },
+    {
+      "name": "Mock helpers",
+      "description": "Test-only utilities (not part of FMR)"
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://fmr-mock.onrender.com",
+      "description": "Render"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local"
+    }
+  ]
+}
