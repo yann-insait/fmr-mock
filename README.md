@@ -38,6 +38,7 @@ The repo includes `render.yaml`, so Render sets everything up from it.
 |---|---|---|
 | `MOCK_API_KEY` | *(empty)* | If set, every request (except `/health`) needs header `X-API-Key`. Set it when deployed publicly. |
 | `MAX_VERIFY_ATTEMPTS` | `3` | Wrong account numbers allowed per RequestID before `423`. |
+| `MAX_BANK_ATTEMPTS` | `2` | Wrong bank details allowed per RequestID before `423` (spec `BankAttempts`). |
 | `FMR_STATUS_IN_HTTP` | `true` | `true`: HTTP status = FMR status (210, 436…). `false`: always HTTP 200, status only in body `Status`. Use `false` if the agent's tool treats non-2xx as a failure. |
 | `ACCOUNTS_FILE` | `app/data/accounts.json` | Mock accounts. |
 | `PORT` | `8080` | Docker only. |
@@ -92,6 +93,31 @@ Any MToken works, except `invalid` or `expired` → `401 INVALID_MTOKEN`.
 | 436 | `CARD_NOT_ACTIVE` | ResetPassword with an inactive card (RecoverUserID doesn't check card status, per spec) |
 
 **Real FMR codes:** 209, 210, 427, 433 and 436 come from the spec. 400 (`CARD_NOT_FOUND`), 401, 404 and 423 are placeholders until FMR confirms their error codes.
+
+## Identification by bank details (עו"ש)
+
+Per the spec, `AccountVerification` accepts **either** `Account` **or** all three of `Bank` (≤3 digits), `BankBranch` (≤3 digits) and `BankAccount` (≤9 digits). Numbers are compared as integers, so `"012"`, `"12"` and `12` match.
+
+| Code | Error | When |
+|---|---|---|
+| 400 | `BAD_REQUEST` | Neither `Account` nor bank details sent |
+| 400 | `INVALID_BANK_FORMAT` | Too many digits / not digits (doesn't use an attempt) |
+| 404 | `BANK_DETAILS_NOT_FOUND` | No trade account with these bank details (uses a bank attempt; `AttemptsLeft` returned) |
+| 418 | `BANK_DETAILS_MULTIPLE_ACCOUNTS` | Bank details belong to more than one trade account |
+| 423 | `TOO_MANY_ATTEMPTS` | `MAX_BANK_ATTEMPTS` (default 2) wrong bank details |
+| 434 | `PARTIAL_BANK_DETAILS` | Only 1–2 of the 3 bank fields sent |
+| 435 | `ACCOUNT_AND_BANK_DETAILS` | `Account` and bank fields sent together (spec text says 412, its error table says 435) |
+
+Bank attempts and trade-account attempts are counted separately per RequestID (spec: `BankAttempts`, `ACCAttempts`).
+
+| Bank / Branch / Account | Trade account | Result |
+|---|---|---|
+| `012` / `600` / `123456` | 001234 | One card (771) |
+| `010` / `800` / `554433` | 012345 | Two cards (025, 418) |
+| `020` / `456` / `98765` | 054321 | No email (RecoverUserID → 427) |
+| `011` / `042` / `777888` | 067890 | 552 inactive, 860 |
+| `012` / `600` / `999000` | 098765 | TIK = Y |
+| `031` / `123` / `112233` | 054321 **and** 067890 | **418** (joint account) |
 
 ## Test accounts
 

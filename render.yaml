@@ -11,3 +11,5 @@ services:
         value: "true"
       - key: MAX_VERIFY_ATTEMPTS
         value: "3"
+      - key: MAX_BANK_ATTEMPTS
+        value: "2"

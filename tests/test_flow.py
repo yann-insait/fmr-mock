@@ -134,3 +134,60 @@ def test_openapi_has_security_and_examples():
     spec = c.get("/openapi.json").json()
     assert "APIKeyHeader" in spec["components"]["securitySchemes"]
     assert "436" in spec["paths"]["/ResetPassword"]["post"]["responses"]
+
+
+# --------------------------------------------------------------------------- bank details (עו"ש)
+
+def bank(t, b, br, a, **kw):
+    return c.post("/AccountVerification", json=auth(t, Bank=b, BankBranch=br, BankAccount=a, **kw))
+
+
+def test_bank_details_identify_customer():
+    t = login()
+    r = bank(t, "010", "800", "554433")
+    assert r.status_code == 200 and [x["Last3"] for x in r.json()["Cards"]] == ["025", "418"]
+    assert c.post("/ResetPassword", json=auth(t, UserId="418")).status_code == 210
+
+
+def test_bank_details_leading_zeros_and_ints():
+    t = login()
+    assert bank(t, 12, 600, 123456).status_code == 200
+
+
+def test_bank_joint_account_418():
+    t = login()
+    r = bank(t, "031", "123", "112233")
+    assert r.status_code == 418 and r.json()["Error"] == "BANK_DETAILS_MULTIPLE_ACCOUNTS"
+
+
+def test_bank_partial_434():
+    t = login()
+    r = c.post("/AccountVerification", json=auth(t, Bank="012", BankBranch="600"))
+    assert r.status_code == 434
+
+
+def test_account_and_bank_435():
+    t = login()
+    r = c.post("/AccountVerification", json=auth(t, Account="001234", Bank="012", BankBranch="600", BankAccount="123456"))
+    assert r.status_code == 435
+
+
+def test_nothing_sent_400():
+    t = login()
+    assert c.post("/AccountVerification", json=auth(t)).status_code == 400
+
+
+def test_bank_attempts_separate_from_account_attempts():
+    t = login()
+    for left in (1, 0):
+        r = bank(t, "999", "999", "999999")
+        assert r.status_code == 404 and r.json()["AttemptsLeft"] == left
+    assert bank(t, "012", "600", "123456").status_code == 423
+    # the trade-account route still has its own attempts
+    assert c.post("/AccountVerification", json=auth(t, Account="001234")).status_code == 200
+
+
+def test_bank_bad_format_does_not_use_attempt():
+    t = login()
+    assert bank(t, "1234", "600", "123456").status_code == 400
+    assert bank(t, "012", "600", "123456").status_code == 200

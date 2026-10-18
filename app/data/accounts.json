@@ -1,5 +1,5 @@
 {
-  "_comment": "Mock FMR accounts. Account numbers are 6 digits (Encore pads shorter input with leading zeros before calling AccountVerification).",
+  "_comment": "Mock FMR accounts. Account numbers are 6 digits (Encore pads shorter input with leading zeros before calling AccountVerification). Each account also lists its bank (עו\"ש) accounts for identification by bank details; 031/123/112233 is shared by 054321 and 067890 (joint account -> 418).",
   "accounts": [
     {
       "account": "001234",
@@ -8,7 +8,20 @@
       "last_name": "Levi",
       "email": "Y",
       "tik": "N",
-      "cards": [{ "last3": "771", "permission_code": "01", "active": true }]
+      "cards": [
+        {
+          "last3": "771",
+          "permission_code": "01",
+          "active": true
+        }
+      ],
+      "banks": [
+        {
+          "bank": "012",
+          "branch": "600",
+          "account": "123456"
+        }
+      ]
     },
     {
       "account": "012345",
@@ -18,8 +31,23 @@
       "email": "Y",
       "tik": "N",
       "cards": [
-        { "last3": "025", "permission_code": "01", "active": true },
-        { "last3": "418", "permission_code": "02", "active": true }
+        {
+          "last3": "025",
+          "permission_code": "01",
+          "active": true
+        },
+        {
+          "last3": "418",
+          "permission_code": "02",
+          "active": true
+        }
+      ],
+      "banks": [
+        {
+          "bank": "010",
+          "branch": "800",
+          "account": "554433"
+        }
       ]
     },
     {
@@ -29,7 +57,25 @@
       "last_name": "Mizrahi",
       "email": "N",
       "tik": "N",
-      "cards": [{ "last3": "309", "permission_code": "01", "active": true }]
+      "cards": [
+        {
+          "last3": "309",
+          "permission_code": "01",
+          "active": true
+        }
+      ],
+      "banks": [
+        {
+          "bank": "020",
+          "branch": "456",
+          "account": "98765"
+        },
+        {
+          "bank": "031",
+          "branch": "123",
+          "account": "112233"
+        }
+      ]
     },
     {
       "account": "067890",
@@ -39,8 +85,28 @@
       "email": "Y",
       "tik": "N",
       "cards": [
-        { "last3": "552", "permission_code": "01", "active": false },
-        { "last3": "860", "permission_code": "01", "active": true }
+        {
+          "last3": "552",
+          "permission_code": "01",
+          "active": false
+        },
+        {
+          "last3": "860",
+          "permission_code": "01",
+          "active": true
+        }
+      ],
+      "banks": [
+        {
+          "bank": "011",
+          "branch": "042",
+          "account": "777888"
+        },
+        {
+          "bank": "031",
+          "branch": "123",
+          "account": "112233"
+        }
       ]
     },
     {
@@ -50,7 +116,20 @@
       "last_name": "Friedman",
       "email": "Y",
       "tik": "Y",
-      "cards": [{ "last3": "144", "permission_code": "03", "active": true }]
+      "cards": [
+        {
+          "last3": "144",
+          "permission_code": "03",
+          "active": true
+        }
+      ],
+      "banks": [
+        {
+          "bank": "012",
+          "branch": "600",
+          "account": "999000"
+        }
+      ]
     }
   ]
 }

@@ -19,7 +19,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Security
 from fastapi.exceptions import RequestValidationError
@@ -33,6 +33,8 @@ def _env_bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 MAX_VERIFY_ATTEMPTS = int(os.getenv("MAX_VERIFY_ATTEMPTS", "3"))
+# Spec: BankAttempts = 2 failed bank-details identifications per RequestID (separate from the account counter).
+MAX_BANK_ATTEMPTS = int(os.getenv("MAX_BANK_ATTEMPTS", "2"))
 # True: HTTP status == FMR status (210, 436, ...). False: always HTTP 200, status only in the body.
 STATUS_IN_HTTP = _env_bool("FMR_STATUS_IN_HTTP", True)
 API_KEY = os.getenv("MOCK_API_KEY", "")  # if set, every request needs header X-API-Key
@@ -104,10 +106,14 @@ class ValidateExTokenIn(BaseModel):
 
 
 class AccountVerificationIn(BaseModel):
+    """Send EITHER the trade account number OR all three bank (עו"ש) fields, never both."""
     RequestID: str = Field(..., description="From ValidateExToken")
     RToken: str = Field(..., description="From ValidateExToken")
-    Account: str = Field(..., description="Trade account number, exactly 6 digits (pad with leading zeros)",
-                         examples=["012345"])
+    Account: Optional[str] = Field(None, description="Trade account number, exactly 6 digits (pad with leading zeros)",
+                                   examples=["012345"])
+    Bank: Optional[Union[str, int]] = Field(None, description="Bank number, up to 3 digits", examples=["012"])
+    BankBranch: Optional[Union[str, int]] = Field(None, description="Branch number, up to 3 digits", examples=["600"])
+    BankAccount: Optional[Union[str, int]] = Field(None, description="Bank account number, up to 9 digits", examples=["123456"])
 
 
 class ActionIn(BaseModel):
@@ -181,6 +187,18 @@ Mock of the **FMR** APIs used by the Meitav Trade agent for **password reset** a
 | `098765` | 144 | TIK = Y (managed account) |
 | any other | – | **404**, 3 attempts then **423** |
 
+### Bank details (instead of `Account`)
+| Bank / Branch / Account | Trade account | Result |
+|---|---|---|
+| `012` / `600` / `123456` | 001234 | One card (771) |
+| `010` / `800` / `554433` | 012345 | Two cards (025, 418) |
+| `020` / `456` / `98765` | 054321 | No email (RecoverUserID → 427) |
+| `011` / `042` / `777888` | 067890 | 552 inactive, 860 |
+| `031` / `123` / `112233` | 054321 **and** 067890 | **418** (joint bank account) |
+| any other full set | – | **404**, 2 attempts then **423** |
+| only 1–2 bank fields | – | **434** |
+| `Account` + bank fields | – | **435** |
+
 ### Status codes
 By default the HTTP status equals the FMR `Status` (e.g. 210, 436). If the server runs with
 `FMR_STATUS_IN_HTTP=false`, every response is HTTP 200 and the code is only in `Status`.
@@ -225,41 +243,101 @@ def validate_ex_token(body: ValidateExTokenIn = Body(openapi_examples={
             return fmr_error(401, "INVALID_MTOKEN", f"MToken rejected ({body.MToken.lower()})")
 
         rid = str(uuid.uuid4())
-        s = {"ex_session_id": body.ExSessionID, "attempts": 0, "verified_account": None}
+        s = {"ex_session_id": body.ExSessionID, "attempts": 0, "bank_attempts": 0, "verified_account": None}
         issue_rtoken(s)
         SESSIONS[rid] = s
         return fmr(200, RequestID=rid, RToken=s["rtoken"])
 
 
-@app.post("/AccountVerification", tags=["FMR"], summary="Verify the trade account and return its cards",
-          responses={200: {"model": VerificationOut, "description": "Account verified"},
+def _bank_key(bank: Any, branch: Any, account: Any) -> Optional[tuple[int, int, int]]:
+    """Normalise bank details to ints (so "012" == "12" == 12). None if the format is wrong."""
+    parts = [str(x).strip() for x in (bank, branch, account)]
+    limits = (3, 3, 9)
+    if not all(p.isdigit() and 1 <= len(p) <= n for p, n in zip(parts, limits)):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def _bank_index() -> dict[tuple[int, int, int], list[str]]:
+    idx: dict[tuple[int, int, int], list[str]] = {}
+    for acc in ACCOUNTS.values():
+        for b in acc.get("banks", []):
+            idx.setdefault(_bank_key(b["bank"], b["branch"], b["account"]), []).append(acc["account"])
+    return idx
+
+
+def _verified(s: dict, acc: dict) -> JSONResponse:
+    s["verified_account"] = acc["account"]
+    return fmr(200,
+               Cards=[{"Last3": c["last3"], "PermissionCode": c["permission_code"]} for c in acc["cards"]],
+               Email=acc["email"], TIK=acc["tik"],
+               FirstName=acc["first_name"], LastName=acc["last_name"])
+
+
+@app.post("/AccountVerification", tags=["FMR"], summary="Verify the customer by trade account OR bank details",
+          description=(
+              "Send **either** `Account` (6 digits) **or** all three bank fields `Bank` + `BankBranch` + `BankAccount`.\n\n"
+              "Trade account and bank details have separate attempt counters per RequestID "
+              f"(`MAX_VERIFY_ATTEMPTS`, `MAX_BANK_ATTEMPTS`)."),
+          responses={200: {"model": VerificationOut, "description": "Customer identified"},
                      400: err(400, "INVALID_ACCOUNT_FORMAT", "Account must be exactly 6 digits"),
                      401: BAD_TOKEN,
                      404: err(404, "ACCOUNT_NOT_FOUND", "Account does not match the authenticated customer", AttemptsLeft=2),
-                     423: err(423, "TOO_MANY_ATTEMPTS", "Maximum verification attempts reached", AttemptsLeft=0)},
+                     418: err(418, "BANK_DETAILS_MULTIPLE_ACCOUNTS", "Bank details match more than one trade account"),
+                     423: err(423, "TOO_MANY_ATTEMPTS", "Maximum verification attempts reached", AttemptsLeft=0),
+                     434: err(434, "PARTIAL_BANK_DETAILS", "Bank, BankBranch and BankAccount are all required"),
+                     435: err(435, "ACCOUNT_AND_BANK_DETAILS", "Send either the trade account or the bank details, not both")},
           **PROTECTED)
-def account_verification(body: AccountVerificationIn) -> JSONResponse:
+def account_verification(body: AccountVerificationIn = Body(openapi_examples={
+        "account": {"summary": "By trade account", "value": {"RequestID": "<RequestID>", "RToken": "<RToken>", "Account": "012345"}},
+        "bank": {"summary": "By bank details", "value": {"RequestID": "<RequestID>", "RToken": "<RToken>",
+                                                          "Bank": "012", "BankBranch": "600", "BankAccount": "123456"}},
+    })) -> JSONResponse:
     with _lock:
         s, err = get_session(body.RequestID, body.RToken)
         if err:
             return err
-        if s["attempts"] >= MAX_VERIFY_ATTEMPTS:
+
+        bank_fields = (body.Bank, body.BankBranch, body.BankAccount)
+        bank_given = sum(1 for f in bank_fields if f not in (None, ""))
+        has_account = body.Account not in (None, "")
+
+        # Spec: trade account + any bank field -> 435 (the spec text says 412, its error table says 435).
+        if has_account and bank_given:
+            return fmr_error(435, "ACCOUNT_AND_BANK_DETAILS", "Send either the trade account or the bank details, not both")
+        if not has_account and not bank_given:
+            return fmr_error(400, "BAD_REQUEST", "Invalid or missing fields", Fields=["Account | Bank+BankBranch+BankAccount"])
+
+        if has_account:
+            if s["attempts"] >= MAX_VERIFY_ATTEMPTS:
+                return fmr_error(423, "TOO_MANY_ATTEMPTS", "Maximum verification attempts reached", AttemptsLeft=0)
+            if not (body.Account.isdigit() and len(body.Account) == 6):
+                # Format errors don't consume an attempt (Encore should catch these before calling).
+                return fmr_error(400, "INVALID_ACCOUNT_FORMAT", "Account must be exactly 6 digits")
+            acc = ACCOUNTS.get(body.Account)
+            if not acc:
+                s["attempts"] += 1
+                return fmr_error(404, "ACCOUNT_NOT_FOUND", "Account does not match the authenticated customer",
+                                 AttemptsLeft=MAX_VERIFY_ATTEMPTS - s["attempts"])
+            return _verified(s, acc)
+
+        # ---- bank details (עו"ש)
+        if bank_given < 3:
+            return fmr_error(434, "PARTIAL_BANK_DETAILS", "Bank, BankBranch and BankAccount are all required")
+        if s["bank_attempts"] >= MAX_BANK_ATTEMPTS:
             return fmr_error(423, "TOO_MANY_ATTEMPTS", "Maximum verification attempts reached", AttemptsLeft=0)
-        if not (body.Account.isdigit() and len(body.Account) == 6):
-            # Format errors don't consume an attempt (Encore should catch these before calling).
-            return fmr_error(400, "INVALID_ACCOUNT_FORMAT", "Account must be exactly 6 digits")
-
-        acc = ACCOUNTS.get(body.Account)
-        if not acc:
-            s["attempts"] += 1
-            return fmr_error(404, "ACCOUNT_NOT_FOUND", "Account does not match the authenticated customer",
-                             AttemptsLeft=MAX_VERIFY_ATTEMPTS - s["attempts"])
-
-        s["verified_account"] = acc["account"]
-        return fmr(200,
-                   Cards=[{"Last3": c["last3"], "PermissionCode": c["permission_code"]} for c in acc["cards"]],
-                   Email=acc["email"], TIK=acc["tik"],
-                   FirstName=acc["first_name"], LastName=acc["last_name"])
+        key = _bank_key(*bank_fields)
+        if key is None:
+            return fmr_error(400, "INVALID_BANK_FORMAT",
+                             "Bank and BankBranch: up to 3 digits; BankAccount: up to 9 digits")
+        matches = _bank_index().get(key, [])
+        if len(matches) > 1:
+            return fmr_error(418, "BANK_DETAILS_MULTIPLE_ACCOUNTS", "Bank details match more than one trade account")
+        if not matches:
+            s["bank_attempts"] += 1
+            return fmr_error(404, "BANK_DETAILS_NOT_FOUND", "Bank details do not match the authenticated customer",
+                             AttemptsLeft=MAX_BANK_ATTEMPTS - s["bank_attempts"])
+        return _verified(s, ACCOUNTS[matches[0]])
 
 
 def _run_action(body: ActionIn, kind: str) -> JSONResponse:
