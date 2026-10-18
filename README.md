@@ -85,13 +85,13 @@ Any MToken works, except `invalid` or `expired` → `401 INVALID_MTOKEN`.
 | 400 | `BAD_REQUEST` / `INVALID_ACCOUNT_FORMAT` | Missing fields; account not exactly 6 digits (doesn't use an attempt) |
 | 401 | `INVALID_MTOKEN` / `INVALID_TOKEN` | Auth problems |
 | 404 | `ACCOUNT_NOT_FOUND` | Unknown account (uses an attempt; `AttemptsLeft` returned) |
-| 404 | `CARD_NOT_FOUND` | `UserId` isn't a card on the verified account |
-| 409 | `ACCOUNT_NOT_VERIFIED` | Action called before AccountVerification |
+| 400 | `CARD_NOT_FOUND` | `UserId` isn't a card on the verified account (no dedicated code in the spec) |
+| 433 | `NOT_IDENTIFIED` | ResetPassword / RecoverUserID before a successful AccountVerification (spec 433) |
 | 423 | `TOO_MANY_ATTEMPTS` | Max wrong account numbers reached |
 | 427 | `NO_EMAIL` | RecoverUserID on account with Email = N |
-| 436 | `CARD_NOT_ACTIVE` | Selected card inactive |
+| 436 | `CARD_NOT_ACTIVE` | ResetPassword with an inactive card (RecoverUserID doesn't check card status, per spec) |
 
-**Real FMR codes:** only 209, 210, 427 and 436 come from the spec. 400/401/404/409/423 are placeholders until FMR confirms their error codes.
+**Real FMR codes:** 209, 210, 427, 433 and 436 come from the spec. 400 (`CARD_NOT_FOUND`), 401, 404 and 423 are placeholders until FMR confirms their error codes.
 
 ## Test accounts
 

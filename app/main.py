@@ -185,7 +185,7 @@ Mock of the **FMR** APIs used by the Meitav Trade agent for **password reset** a
 By default the HTTP status equals the FMR `Status` (e.g. 210, 436). If the server runs with
 `FMR_STATUS_IN_HTTP=false`, every response is HTTP 200 and the code is only in `Status`.
 
-Only **209, 210, 427, 436** come from the spec; other error codes are placeholders until FMR confirms them.
+Only **209, 210, 427, 433, 436** come from the spec; other error codes are placeholders until FMR confirms them.
 """
 
 app = FastAPI(
@@ -268,15 +268,18 @@ def _run_action(body: ActionIn, kind: str) -> JSONResponse:
         if err:
             return err
         if not s["verified_account"]:
-            return fmr_error(409, "ACCOUNT_NOT_VERIFIED", "Call AccountVerification first")
+            # Spec: 433 = customer not identified by trade account or bank details (AccOK/BankOK != Y).
+            return fmr_error(433, "NOT_IDENTIFIED", "Customer not identified by trade account or bank details")
         acc = ACCOUNTS[s["verified_account"]]
         card = next((c for c in acc["cards"] if c["last3"] == body.UserId), None)
         if not card:
-            return fmr_error(404, "CARD_NOT_FOUND", "UserId does not match a card on this account")
+            # The spec has no dedicated code for this; 400 = invalid request.
+            return fmr_error(400, "CARD_NOT_FOUND", "UserId does not match a card on this account")
 
         if kind == "email" and acc["email"] != "Y":
             return fmr_error(427, "NO_EMAIL", "No email on account; username cannot be sent")
-        if not card["active"]:
+        # Spec: the card-status check (436) applies to ResetPassword only.
+        if kind == "sms" and not card["active"]:
             return fmr_error(436, "CARD_NOT_ACTIVE", "Selected card is not active")
 
         OUTBOX.append({"type": kind, "account": acc["account"], "card": body.UserId,
@@ -289,9 +292,8 @@ def _run_action(body: ActionIn, kind: str) -> JSONResponse:
 @app.post("/ResetPassword", tags=["FMR"], summary="Send the password-reset SMS",
           responses={210: {"model": ActionOut, "description": "SMS sent",
                           "content": {"application/json": {"example": {"Status": 210, "Message": "Password reset SMS sent to the verified phone number"}}}},
-                     400: BAD_REQUEST, 401: BAD_TOKEN,
-                     404: err(404, "CARD_NOT_FOUND", "UserId does not match a card on this account"),
-                     409: err(409, "ACCOUNT_NOT_VERIFIED", "Call AccountVerification first"),
+                     400: err(400, "CARD_NOT_FOUND", "UserId does not match a card on this account"), 401: BAD_TOKEN,
+                     433: err(433, "NOT_IDENTIFIED", "Customer not identified by trade account or bank details"),
                      436: err(436, "CARD_NOT_ACTIVE", "Selected card is not active")}, **PROTECTED)
 def reset_password(body: ActionIn) -> JSONResponse:
     return _run_action(body, "sms")
@@ -300,11 +302,9 @@ def reset_password(body: ActionIn) -> JSONResponse:
 @app.post("/RecoverUserID", tags=["FMR"], summary="Send the username-recovery email",
           responses={209: {"model": ActionOut, "description": "Email sent",
                           "content": {"application/json": {"example": {"Status": 209, "Message": "Username recovery email sent"}}}},
-                     400: BAD_REQUEST, 401: BAD_TOKEN,
-                     404: err(404, "CARD_NOT_FOUND", "UserId does not match a card on this account"),
-                     409: err(409, "ACCOUNT_NOT_VERIFIED", "Call AccountVerification first"),
-                     427: err(427, "NO_EMAIL", "No email on account; username cannot be sent"),
-                     436: err(436, "CARD_NOT_ACTIVE", "Selected card is not active")}, **PROTECTED)
+                     400: err(400, "CARD_NOT_FOUND", "UserId does not match a card on this account"), 401: BAD_TOKEN,
+                     433: err(433, "NOT_IDENTIFIED", "Customer not identified by trade account or bank details"),
+                     427: err(427, "NO_EMAIL", "No email on account; username cannot be sent")}, **PROTECTED)
 def recover_user_id(body: ActionIn) -> JSONResponse:
     return _run_action(body, "email")
 

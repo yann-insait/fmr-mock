@@ -80,7 +80,23 @@ def test_attempts_and_format():
 
 def test_action_requires_verification():
     t = login()
-    assert c.post("/ResetPassword", json=auth(t, UserId="771")).status_code == 409
+    r = c.post("/ResetPassword", json=auth(t, UserId="771"))
+    assert r.status_code == 433 and r.json()["Error"] == "NOT_IDENTIFIED"
+
+
+def test_unknown_card_400():
+    t = login()
+    c.post("/AccountVerification", json=auth(t, Account="012345"))
+    r = c.post("/ResetPassword", json=auth(t, UserId="999"))
+    assert r.status_code == 400 and r.json()["Error"] == "CARD_NOT_FOUND"
+
+
+def test_recover_ignores_card_status():
+    # Spec: 436 is a ResetPassword check only; RecoverUserID on the inactive card still sends the email.
+    t = login()
+    c.post("/AccountVerification", json=auth(t, Account="067890"))
+    assert c.post("/RecoverUserID", json=auth(t, UserId="552")).status_code == 209
+    assert c.post("/ResetPassword", json=auth(t, UserId="552")).status_code == 436
 
 
 def test_tokens_do_not_expire():
