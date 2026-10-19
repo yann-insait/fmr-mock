@@ -159,3 +159,19 @@ curl -s $B/ResetPassword -H 'Content-Type: application/json' \
 ```
 
 Add `-H 'X-API-Key: <key>'` if `MOCK_API_KEY` is set.
+
+## Test only: session callback (`test/session-callback` branch)
+
+Research endpoint for FMR Milestone 2 (customer authenticates in the middle of a chat). Not part of FMR.
+
+- `POST /test/push-session` `{ "conversation_id": "<Encore conversation UUID>", "mtoken": "...", "ex_session_id": "..." }`
+  → returns `200` at once, then after `CALLBACK_DELAY_SECONDS` calls Encore `POST /api/v1/external/conversation`
+  on that `conversation_id` with message `CALLBACK_MESSAGE` and `session_data: {MToken, ExSessionID}`.
+- `GET /test/push-log` → status and response of each callback.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `INSAIT_API_TOKEN` | *(empty)* | API token (`eat_...`) of the Encore test agent. Required; without it the endpoint returns `503`. |
+| `INSAIT_BASE` | `https://api-platform.insait.io` | Encore API host. |
+| `CALLBACK_DELAY_SECONDS` | `2` | Wait before the callback, so the agent's own turn has finished. |
+| `CALLBACK_MESSAGE` | `[session update]` | Message text sent with the callback. |

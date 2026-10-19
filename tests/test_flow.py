@@ -1,3 +1,5 @@
+import json
+import time
 import pytest
 from fastapi.testclient import TestClient
 
@@ -191,3 +193,43 @@ def test_bank_bad_format_does_not_use_attempt():
     t = login()
     assert bank(t, "1234", "600", "123456").status_code == 400
     assert bank(t, "012", "600", "123456").status_code == 200
+
+
+def test_push_session_needs_server_token(monkeypatch):
+    monkeypatch.setattr(main, "INSAIT_API_TOKEN", "")
+    r = c.post("/test/push-session", json={"conversation_id": "c-1"})
+    assert r.status_code == 503
+
+
+def test_push_session_calls_back_in_background(monkeypatch):
+    sent = {}
+
+    class FakeResp:
+        status = 200
+        def read(self):
+            return b'{"response": "ok"}'
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        sent["url"] = req.full_url
+        sent["headers"] = dict(req.header_items())
+        sent["body"] = json.loads(req.data)
+        return FakeResp()
+
+    monkeypatch.setattr(main, "INSAIT_API_TOKEN", "eat_test")
+    monkeypatch.setattr(main, "CALLBACK_DELAY_SECONDS", 0)
+    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    r = c.post("/test/push-session", json={"conversation_id": "c-1", "mtoken": "eyJ.x", "ex_session_id": "s-1"})
+    assert r.status_code == 200 and r.json()["ok"]
+    for _ in range(50):
+        if c.get("/test/push-log").json()["pushes"][-1]["callback_status"] != "pending":
+            break
+        time.sleep(0.05)
+    assert sent["url"].endswith("/api/v1/external/conversation")
+    assert sent["body"]["conversation_id"] == "c-1"
+    assert sent["body"]["session_data"] == {"MToken": "eyJ.x", "ExSessionID": "s-1"}
+    assert sent["headers"]["X-api-token"] == "eat_test"
+    assert c.get("/test/push-log").json()["pushes"][-1]["callback_status"] == 200

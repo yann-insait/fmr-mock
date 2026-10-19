@@ -402,3 +402,69 @@ def mock_outbox() -> dict:
 def mock_reset() -> dict:
     reset_state()
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- test-only: session callback
+# Simulates "Meitav pushes an updated MToken into the open Encore conversation" (FMR Milestone 2 research).
+# The agent calls POST /test/push-session; we answer 200 at once (so the agent's turn is not blocked),
+# then, in the background, call Encore's /conversation on the same conversation_id with the MToken in session_data.
+
+import urllib.error
+import urllib.request
+
+INSAIT_BASE = os.getenv("INSAIT_BASE", "https://api-platform.insait.io").rstrip("/")
+INSAIT_API_TOKEN = os.getenv("INSAIT_API_TOKEN", "")      # the test agent's API token (eat_...), set in Render
+CALLBACK_DELAY_SECONDS = float(os.getenv("CALLBACK_DELAY_SECONDS", "2"))
+CALLBACK_MESSAGE = os.getenv("CALLBACK_MESSAGE", "[session update]")
+PUSH_LOG: list[dict[str, Any]] = []
+
+
+class PushSessionIn(BaseModel):
+    conversation_id: str = Field(..., description="Encore conversation UUID ({{system__conversation_id}} in the flow)")
+    mtoken: str = Field("eyJ.mock-test", description="MToken to push into session_data")
+    ex_session_id: str = Field("fmr-test-session-01", description="ExSessionID to push into session_data")
+
+
+def _push_to_encore(entry: dict[str, Any]) -> None:
+    time.sleep(CALLBACK_DELAY_SECONDS)
+    payload = {
+        "conversation_id": entry["conversation_id"],
+        "message": CALLBACK_MESSAGE,
+        "session_data": {"MToken": entry["mtoken"], "ExSessionID": entry["ex_session_id"]},
+    }
+    req = urllib.request.Request(
+        f"{INSAIT_BASE}/api/v1/external/conversation",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-API-Token": INSAIT_API_TOKEN},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            entry["callback_status"] = resp.status
+            entry["callback_response"] = resp.read().decode("utf-8", "replace")[:2000]
+    except urllib.error.HTTPError as e:
+        entry["callback_status"] = e.code
+        entry["callback_response"] = e.read().decode("utf-8", "replace")[:2000]
+    except Exception as e:  # network error, timeout
+        entry["callback_status"] = None
+        entry["callback_response"] = f"{type(e).__name__}: {e}"
+    entry["finished_at"] = time.time()
+
+
+@app.post("/test/push-session", tags=["Mock helpers"],
+          summary="TEST: push an MToken into an open Encore conversation (background callback)", **PROTECTED)
+def push_session(body: PushSessionIn) -> dict:
+    if not INSAIT_API_TOKEN:
+        raise HTTPException(status_code=503, detail="INSAIT_API_TOKEN is not set on the server")
+    entry = {"id": uuid.uuid4().hex[:8], "conversation_id": body.conversation_id,
+             "mtoken": body.mtoken, "ex_session_id": body.ex_session_id,
+             "queued_at": time.time(), "callback_status": "pending"}
+    with _lock:
+        PUSH_LOG.append(entry)
+    threading.Thread(target=_push_to_encore, args=(entry,), daemon=True).start()
+    return {"ok": True, "push_id": entry["id"], "callback_in_seconds": CALLBACK_DELAY_SECONDS}
+
+
+@app.get("/test/push-log", tags=["Mock helpers"], summary="TEST: results of the session callbacks", **PROTECTED)
+def push_log() -> dict:
+    return {"pushes": PUSH_LOG}
