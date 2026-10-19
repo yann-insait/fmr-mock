@@ -454,8 +454,10 @@ def _push_to_encore(entry: dict[str, Any]) -> None:
     entry["finished_at"] = time.time()
 
 
+# No X-API-Key on purpose: the test agent calls it without a key. It can only push a fixed test message
+# into conversations of the agent whose token is set in INSAIT_API_TOKEN.
 @app.post("/test/push-session", tags=["Mock helpers"],
-          summary="TEST: authenticate the customer (mock Commbox/Meitav creates the MToken and pushes it back)", **PROTECTED)
+          summary="TEST: authenticate the customer (mock Commbox/Meitav creates the MToken and pushes it back)")
 def push_session(body: PushSessionIn) -> dict:
     if not INSAIT_API_TOKEN:
         raise HTTPException(status_code=503, detail="INSAIT_API_TOKEN is not set on the server")

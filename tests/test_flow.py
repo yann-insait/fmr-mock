@@ -264,3 +264,10 @@ def test_push_session_generates_token(monkeypatch):
     assert sd["MToken"].startswith("eyJ.mock-") and len(sd["MToken"]) > 20
     assert len(sd["ExSessionID"]) == 36
     assert c.get("/test/push-log").json()["pushes"][-1]["intent"] == "reset_password"
+
+
+def test_push_session_needs_no_api_key(monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "secret")
+    monkeypatch.setattr(main, "INSAIT_API_TOKEN", "")
+    assert c.post("/test/push-session", json={"conversation_id": "c-3"}).status_code == 503  # not 401
+    assert c.get("/test/push-log").status_code == 401
