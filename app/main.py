@@ -405,9 +405,10 @@ def mock_reset() -> dict:
 
 
 # --------------------------------------------------------------------------- test-only: session callback
-# Simulates "Meitav pushes an updated MToken into the open Encore conversation" (FMR Milestone 2 research).
+# Simulates FMR Milestone 2: the agent asks for authentication; the mock plays Commbox + Meitav.
 # The agent calls POST /test/push-session; we answer 200 at once (so the agent's turn is not blocked),
-# then, in the background, call Encore's /conversation on the same conversation_id with the MToken in session_data.
+# create an MToken + ExSessionID ourselves, then, in the background, call Encore's /conversation on the
+# same conversation_id with them in session_data.
 
 import urllib.error
 import urllib.request
@@ -420,9 +421,11 @@ PUSH_LOG: list[dict[str, Any]] = []
 
 
 class PushSessionIn(BaseModel):
+    """The agent asks "authenticate this customer". The mock plays Commbox + Meitav: it creates the MToken itself."""
     conversation_id: str = Field(..., description="Encore conversation UUID ({{system__conversation_id}} in the flow)")
-    mtoken: str = Field("eyJ.mock-test", description="MToken to push into session_data")
-    ex_session_id: str = Field("fmr-test-session-01", description="ExSessionID to push into session_data")
+    intent: Optional[str] = Field(None, description="reset_password / recover_username / both (logged only)")
+    mtoken: Optional[str] = Field(None, description="Optional override; by default the mock generates one")
+    ex_session_id: Optional[str] = Field(None, description="Optional override; by default the mock generates one")
 
 
 def _push_to_encore(entry: dict[str, Any]) -> None:
@@ -452,12 +455,13 @@ def _push_to_encore(entry: dict[str, Any]) -> None:
 
 
 @app.post("/test/push-session", tags=["Mock helpers"],
-          summary="TEST: push an MToken into an open Encore conversation (background callback)", **PROTECTED)
+          summary="TEST: authenticate the customer (mock Commbox/Meitav creates the MToken and pushes it back)", **PROTECTED)
 def push_session(body: PushSessionIn) -> dict:
     if not INSAIT_API_TOKEN:
         raise HTTPException(status_code=503, detail="INSAIT_API_TOKEN is not set on the server")
-    entry = {"id": uuid.uuid4().hex[:8], "conversation_id": body.conversation_id,
-             "mtoken": body.mtoken, "ex_session_id": body.ex_session_id,
+    entry = {"id": uuid.uuid4().hex[:8], "conversation_id": body.conversation_id, "intent": body.intent,
+             "mtoken": body.mtoken or f"eyJ.mock-{secrets.token_urlsafe(24)}",
+             "ex_session_id": body.ex_session_id or str(uuid.uuid4()),
              "queued_at": time.time(), "callback_status": "pending"}
     with _lock:
         PUSH_LOG.append(entry)

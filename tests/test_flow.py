@@ -233,3 +233,34 @@ def test_push_session_calls_back_in_background(monkeypatch):
     assert sent["body"]["session_data"] == {"MToken": "eyJ.x", "ExSessionID": "s-1"}
     assert sent["headers"]["X-api-token"] == "eat_test"
     assert c.get("/test/push-log").json()["pushes"][-1]["callback_status"] == 200
+
+
+def test_push_session_generates_token(monkeypatch):
+    sent = {}
+
+    class FakeResp:
+        status = 200
+        def read(self):
+            return b"{}"
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        sent["body"] = json.loads(req.data)
+        return FakeResp()
+
+    monkeypatch.setattr(main, "INSAIT_API_TOKEN", "eat_test")
+    monkeypatch.setattr(main, "CALLBACK_DELAY_SECONDS", 0)
+    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    r = c.post("/test/push-session", json={"conversation_id": "c-2", "intent": "reset_password"})
+    assert r.status_code == 200
+    for _ in range(50):
+        if "body" in sent:
+            break
+        time.sleep(0.05)
+    sd = sent["body"]["session_data"]
+    assert sd["MToken"].startswith("eyJ.mock-") and len(sd["MToken"]) > 20
+    assert len(sd["ExSessionID"]) == 36
+    assert c.get("/test/push-log").json()["pushes"][-1]["intent"] == "reset_password"

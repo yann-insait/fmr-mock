@@ -164,7 +164,7 @@ Add `-H 'X-API-Key: <key>'` if `MOCK_API_KEY` is set.
 
 Research endpoint for FMR Milestone 2 (customer authenticates in the middle of a chat). Not part of FMR.
 
-- `POST /test/push-session` `{ "conversation_id": "<Encore conversation UUID>", "mtoken": "...", "ex_session_id": "..." }`
+- `POST /test/push-session` `{ "conversation_id": "<Encore conversation UUID>", "intent": "reset_password" }` (the mock plays Commbox + Meitav: it creates the MToken and ExSessionID itself; `mtoken` / `ex_session_id` are optional overrides)
   → returns `200` at once, then after `CALLBACK_DELAY_SECONDS` calls Encore `POST /api/v1/external/conversation`
   on that `conversation_id` with message `CALLBACK_MESSAGE` and `session_data: {MToken, ExSessionID}`.
 - `GET /test/push-log` → status and response of each callback.
