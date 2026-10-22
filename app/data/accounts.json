@@ -1,5 +1,5 @@
 {
-  "_comment": "Mock FMR accounts. Account numbers are 6 digits (Encore pads shorter input with leading zeros before calling AccountVerification). Each account also lists its bank (עו\"ש) accounts for identification by bank details; 031/123/112233 is shared by 054321 and 067890 (joint account -> 418).",
+  "_comment": "Mock FMR accounts. Account numbers are 6 digits (Encore pads shorter input with leading zeros before calling AccountVerification). Each account also lists its bank (עו\"ש) accounts for identification by bank details; 031/123/112233 is shared by 054321 and 067890 (joint account -> 418). id_number / username: mock-only, used by the Swagger v1 secure-message page (ForgotUsername).",
   "accounts": [
     {
       "account": "001234",
@@ -21,7 +21,9 @@
           "branch": "600",
           "account": "123456"
         }
-      ]
+      ],
+      "id_number": "000000018",
+      "username": "dana.levi"
     },
     {
       "account": "012345",
@@ -48,7 +50,9 @@
           "branch": "800",
           "account": "554433"
         }
-      ]
+      ],
+      "id_number": "000000026",
+      "username": "yossi.cohen"
     },
     {
       "account": "054321",
@@ -75,7 +79,9 @@
           "branch": "123",
           "account": "112233"
         }
-      ]
+      ],
+      "id_number": "000000034",
+      "username": "noa.mizrahi"
     },
     {
       "account": "067890",
@@ -107,7 +113,9 @@
           "branch": "123",
           "account": "112233"
         }
-      ]
+      ],
+      "id_number": "000000042",
+      "username": "avi.peretz"
     },
     {
       "account": "098765",
@@ -129,7 +137,9 @@
           "branch": "600",
           "account": "999000"
         }
-      ]
+      ],
+      "id_number": "000000059",
+      "username": "rina.katz"
     }
   ]
 }

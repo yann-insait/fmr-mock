@@ -63,6 +63,8 @@ def reset_state() -> None:
         SESSIONS.clear()
         OUTBOX.clear()
         load_accounts()
+        from app.fmr_v1 import reset_v1_state  # deep links / secure messages of the Swagger v1 routes
+        reset_v1_state()
 
 
 load_accounts()
@@ -474,3 +476,10 @@ def push_session(body: PushSessionIn) -> dict:
 @app.get("/test/push-log", tags=["Mock helpers"], summary="TEST: results of the session callbacks", **PROTECTED)
 def push_log() -> dict:
     return {"pushes": PUSH_LOG}
+
+
+# --------------------------------------------------------------------------- FMR Swagger v1 (/api/ExternalProvider/*)
+# FMR's own contract (Swagger prototype, 20.10). Kept next to the routes above, which the Encore staging tools still call.
+from app.fmr_v1 import router as fmr_v1_router  # noqa: E402
+
+app.include_router(fmr_v1_router)

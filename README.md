@@ -132,6 +132,28 @@ Bank attempts and trade-account attempts are counted separately per RequestID (s
 
 Edit `app/data/accounts.json` to add more.
 
+## FMR Swagger v1 (`/api/ExternalProvider/*`)
+
+FMR's own contract (Swagger prototype, 20.10, untested on their side). Same accounts, attempts and outbox as the routes above; those older routes stay, because the Encore staging tools still call them.
+
+| Endpoint | Request | Response |
+|---|---|---|
+| `POST /api/ExternalProvider/ValidateExToken` | `ExSessionID`, `mjwtToken` | `ExSessionID`, `RequestID`, `rjwtToken`, `Status`. **HTTP status = Status.** |
+| `POST /api/ExternalProvider/AccountVerification` | `RequestID`, `rjwtToken` + `Account` **or** `Bank` + `Branch` + `BankAccount` | **Array** of `{RequestID, rjwtToken, Status, Email, Tik, FirstName, LastName, CardPermission: [{SubCard, Permission}]}` |
+| `POST /api/ExternalProvider/ResetPassword` | `RequestID`, `rjwtToken`, `SubCard` | `RequestID`, `rjwtToken`, `Status`, `DeepLink` |
+| `POST /api/ExternalProvider/ResetPasswordCard` | `RequestID`, `rjwtToken`, `DeeplinkID` | `RequestID`, `Status`, `CardID` |
+| `POST /api/ExternalProvider/ForgotUsername` | `RequestID`, `rjwtToken`, `SubCard` | `RequestID`, `rjwtToken`, `Status` (the secure-message link goes to `/mock/outbox`) |
+| `GET /api/ExternalProvider/SecureMessage/{token}` | – | HTML form (public, no API key) |
+| `POST /api/ExternalProvider/SecureMessage/{token}/Unlock` | form `clientID` | HTML page with the username; 403 if the ID number is wrong |
+
+HTTP status (from the Swagger): `ValidateExToken` returns the Status as the HTTP code. The other endpoints return **200**, or **401** when Status is 404 or 408 (`ResetPasswordCard`: **403** for 433). An invalid request is an **empty 400**. No `Error` / `Message` / `AttemptsLeft` fields.
+
+Business Status values are not in the Swagger; the mock keeps the spec V10.1 ones: 200, 209 (secure message sent), 210 (deep link created), 404 not found, 408 session expired, 418, 423, 427, 433, 434, 435, 436.
+
+`mjwtToken` values that simulate outcomes: `invalid` / `expired` → 400, `active-request` → 430, `duplicate` → 432, `no-card` → 436, `session-expired` → the session opens, later calls get 408.
+
+`Permission` comes from the account's `permission_code`: 00 None, 01 FullExecution, 02 InformationOnly, 03 ExecuteTransactionsNoWithdrawal (our guess). Test ID numbers for the secure message: `id_number` in `app/data/accounts.json` (e.g. 001234 → `000000018`, username `dana.levi`).
+
 ## Mock-only helpers
 
 | Endpoint | Purpose |
