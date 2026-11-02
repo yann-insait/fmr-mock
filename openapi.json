@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FMR Mock API",
-    "description": "\nMock of the **FMR** APIs used by the Meitav Trade agent for **password reset** and **username recovery**.\n\n**Authorize first:** click **Authorize** and paste the API key (`MOCK_API_KEY`).\n\n### Flow\n1. `ValidateExToken`: get `RequestID` + `RToken`\n2. `AccountVerification`: verify the 6-digit trade account, get the cards\n3. `ResetPassword` (→ 210, SMS) or `RecoverUserID` (→ 209, email) with `UserId` = card's last 3 digits\n\n### Test accounts\n| Account | Cards | Result |\n|---|---|---|\n| `001234` | 771 | Happy path (one card) |\n| `012345` | 025, 418 | Two cards: customer picks |\n| `054321` | 309 | RecoverUserID → **427** (no email) |\n| `067890` | 552 (inactive), 860 | 552 → **436** |\n| `098765` | 144 | TIK = Y (managed account) |\n| any other | – | **404**, 3 attempts then **423** |\n\n### Status codes\nBy default the HTTP status equals the FMR `Status` (e.g. 210, 436). If the server runs with\n`FMR_STATUS_IN_HTTP=false`, every response is HTTP 200 and the code is only in `Status`.\n\nOnly **209, 210, 427, 436** come from the spec; other error codes are placeholders until FMR confirms them.\n",
+    "description": "\nMock of the **FMR** APIs used by the Meitav Trade agent for **password reset** and **username recovery**.\n\n**Authorize first:** click **Authorize** and paste the API key (`MOCK_API_KEY`).\n\n### Flow\n1. `ValidateExToken`: get `RequestID` + `RToken`\n2. `AccountVerification`: verify the 6-digit trade account, get the cards\n3. `ResetPassword` (→ 210, SMS) or `RecoverUserID` (→ 209, email) with `UserId` = card's last 3 digits\n\n### Test accounts\n| Account | Cards | Result |\n|---|---|---|\n| `001234` | 771 | Happy path (one card) |\n| `012345` | 025, 418 | Two cards: customer picks |\n| `054321` | 309 | RecoverUserID → **427** (no email) |\n| `067890` | 552 (inactive), 860 | 552 → **436** |\n| `098765` | 144 | TIK = Y (managed account) |\n| any other | – | **404**, 3 attempts then **423** |\n\n### Bank details (instead of `Account`)\n| Bank / Branch / Account | Trade account | Result |\n|---|---|---|\n| `012` / `600` / `123456` | 001234 | One card (771) |\n| `010` / `800` / `554433` | 012345 | Two cards (025, 418) |\n| `020` / `456` / `98765` | 054321 | No email (RecoverUserID → 427) |\n| `011` / `042` / `777888` | 067890 | 552 inactive, 860 |\n| `031` / `123` / `112233` | 054321 **and** 067890 | **418** (joint bank account) |\n| any other full set | – | **404**, 2 attempts then **423** |\n| only 1–2 bank fields | – | **434** |\n| `Account` + bank fields | – | **435** |\n\n### Forms\n`POST /api/formemail/send-form-by-email` emails a filled form (`formName`: `kubiot` or `nispah5`).\nAny recipient works; `@fail.com` / `@error.com` → **500**.\n\n### Status codes\nBy default the HTTP status equals the FMR `Status` (e.g. 210, 436). If the server runs with\n`FMR_STATUS_IN_HTTP=false`, every response is HTTP 200 and the code is only in `Status`.\n\nOnly **209, 210, 427, 433, 436** come from the spec; other error codes are placeholders until FMR confirms them.\n",
     "version": "1.0.0"
   },
   "paths": {
@@ -130,13 +130,34 @@
         "tags": [
           "FMR"
         ],
-        "summary": "Verify the trade account and return its cards",
+        "summary": "Verify the customer by trade account OR bank details",
+        "description": "Send **either** `Account` (6 digits) **or** all three bank fields `Bank` + `BankBranch` + `BankAccount`.\n\nTrade account and bank details have separate attempt counters per RequestID (`MAX_VERIFY_ATTEMPTS`, `MAX_BANK_ATTEMPTS`).",
         "operationId": "account_verification_AccountVerification_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AccountVerificationIn"
+              },
+              "examples": {
+                "account": {
+                  "summary": "By trade account",
+                  "value": {
+                    "RequestID": "<RequestID>",
+                    "RToken": "<RToken>",
+                    "Account": "012345"
+                  }
+                },
+                "bank": {
+                  "summary": "By bank details",
+                  "value": {
+                    "RequestID": "<RequestID>",
+                    "RToken": "<RToken>",
+                    "Bank": "012",
+                    "BankBranch": "600",
+                    "BankAccount": "123456"
+                  }
+                }
               }
             }
           },
@@ -144,7 +165,7 @@
         },
         "responses": {
           "200": {
-            "description": "Account verified",
+            "description": "Customer identified",
             "content": {
               "application/json": {
                 "schema": {
@@ -199,6 +220,21 @@
               }
             }
           },
+          "418": {
+            "description": "BANK_DETAILS_MULTIPLE_ACCOUNTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 418,
+                  "Error": "BANK_DETAILS_MULTIPLE_ACCOUNTS",
+                  "Message": "Bank details match more than one trade account"
+                }
+              }
+            }
+          },
           "423": {
             "description": "TOO_MANY_ATTEMPTS",
             "content": {
@@ -211,6 +247,36 @@
                   "Error": "TOO_MANY_ATTEMPTS",
                   "Message": "Maximum verification attempts reached",
                   "AttemptsLeft": 0
+                }
+              }
+            }
+          },
+          "434": {
+            "description": "PARTIAL_BANK_DETAILS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 434,
+                  "Error": "PARTIAL_BANK_DETAILS",
+                  "Message": "Bank, BankBranch and BankAccount are all required"
+                }
+              }
+            }
+          },
+          "435": {
+            "description": "ACCOUNT_AND_BANK_DETAILS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 435,
+                  "Error": "ACCOUNT_AND_BANK_DETAILS",
+                  "Message": "Send either the trade account or the bank details, not both"
                 }
               }
             }
@@ -274,7 +340,7 @@
             }
           },
           "400": {
-            "description": "BAD_REQUEST",
+            "description": "CARD_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -282,11 +348,8 @@
                 },
                 "example": {
                   "Status": 400,
-                  "Error": "BAD_REQUEST",
-                  "Message": "Invalid or missing fields",
-                  "Fields": [
-                    "RToken"
-                  ]
+                  "Error": "CARD_NOT_FOUND",
+                  "Message": "UserId does not match a card on this account"
                 }
               }
             }
@@ -306,32 +369,17 @@
               }
             }
           },
-          "404": {
-            "description": "CARD_NOT_FOUND",
+          "433": {
+            "description": "NOT_IDENTIFIED",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 },
                 "example": {
-                  "Status": 404,
-                  "Error": "CARD_NOT_FOUND",
-                  "Message": "UserId does not match a card on this account"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "ACCOUNT_NOT_VERIFIED",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorOut"
-                },
-                "example": {
-                  "Status": 409,
-                  "Error": "ACCOUNT_NOT_VERIFIED",
-                  "Message": "Call AccountVerification first"
+                  "Status": 433,
+                  "Error": "NOT_IDENTIFIED",
+                  "Message": "Customer not identified by trade account or bank details"
                 }
               }
             }
@@ -410,7 +458,7 @@
             }
           },
           "400": {
-            "description": "BAD_REQUEST",
+            "description": "CARD_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -418,11 +466,8 @@
                 },
                 "example": {
                   "Status": 400,
-                  "Error": "BAD_REQUEST",
-                  "Message": "Invalid or missing fields",
-                  "Fields": [
-                    "RToken"
-                  ]
+                  "Error": "CARD_NOT_FOUND",
+                  "Message": "UserId does not match a card on this account"
                 }
               }
             }
@@ -442,32 +487,17 @@
               }
             }
           },
-          "404": {
-            "description": "CARD_NOT_FOUND",
+          "433": {
+            "description": "NOT_IDENTIFIED",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 },
                 "example": {
-                  "Status": 404,
-                  "Error": "CARD_NOT_FOUND",
-                  "Message": "UserId does not match a card on this account"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "ACCOUNT_NOT_VERIFIED",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorOut"
-                },
-                "example": {
-                  "Status": 409,
-                  "Error": "ACCOUNT_NOT_VERIFIED",
-                  "Message": "Call AccountVerification first"
+                  "Status": 433,
+                  "Error": "NOT_IDENTIFIED",
+                  "Message": "Customer not identified by trade account or bank details"
                 }
               }
             }
@@ -487,17 +517,148 @@
               }
             }
           },
-          "436": {
-            "description": "CARD_NOT_ACTIVE",
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/formemail/send-form-by-email": {
+      "post": {
+        "tags": [
+          "Forms"
+        ],
+        "summary": "Email a filled form to the customer",
+        "description": "Mock of Meitav's `chat-integration-api` `send-form-by-email`. Pick the `data` shape with `formName`: **kubiot** (pension enrolment) or **nispah5** (נספח ה'). No RequestID/RToken needed. The real API also wants the customer's bearer token and the IBM gateway headers `x-ibm-client-id` / `x-ibm-client-secret`; the mock ignores all three.\n\nAny email works, except one at `@fail.com` or `@error.com`, which returns 500 `FORM_SEND_FAILED`. Unknown `formName` or missing `data` fields return 400.",
+        "operationId": "send_form_by_email_api_formemail_send_form_by_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendFormIn"
+              },
+              "examples": {
+                "kubiot": {
+                  "summary": "kubiot: two products (200)",
+                  "value": {
+                    "email": "customer@example.com",
+                    "formName": "kubiot",
+                    "data": {
+                      "new_filldate": "20/11/2025",
+                      "fullName": "ישראל ישראלי",
+                      "idNumber": "012345678",
+                      "employeName": "מיטב",
+                      "HP": "516583036",
+                      "monthlyIncome": "3,000",
+                      "product": "פנסיה מקיפה",
+                      "salaryCategory": "משכורת בסיסית",
+                      "ma": "163",
+                      "ddovedPayment": "6%",
+                      "ddcompensation": "6%",
+                      "ddmaasikPayment": "6.5%",
+                      "insureIncome": "2,000",
+                      "product2": "השתלמות",
+                      "salaryCategory2": "משכורת בסיסית",
+                      "ma2": "880",
+                      "ddovedPayment2": "2.5%",
+                      "ddmaasikPayment2": "7.5%",
+                      "insureIncome2": "3,000"
+                    }
+                  }
+                },
+                "nispah5": {
+                  "summary": "nispah5 (200)",
+                  "value": {
+                    "email": "customer@example.com",
+                    "formName": "nispah5",
+                    "data": {
+                      "emploeeName": "ישראל ישראלי",
+                      "idNumber": "012345678",
+                      "maasikName": "מיטב",
+                      "HP": "516583036",
+                      "product": "מיטב פנסיה מקיפה",
+                      "accountNum": "18-012345678"
+                    }
+                  }
+                },
+                "failed": {
+                  "summary": "Send failed (500)",
+                  "value": {
+                    "email": "customer@fail.com",
+                    "formName": "nispah5",
+                    "data": {
+                      "emploeeName": "ישראל ישראלי",
+                      "idNumber": "012345678",
+                      "maasikName": "מיטב",
+                      "HP": "516583036",
+                      "product": "מיטב פנסיה מקיפה",
+                      "accountNum": "18-012345678"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Form emailed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendFormOut"
+                },
+                "example": {
+                  "Status": 200,
+                  "Message": "Form sent by email",
+                  "FormName": "kubiot",
+                  "ReferenceID": "6f1c…"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorOut"
                 },
                 "example": {
-                  "Status": 436,
-                  "Error": "CARD_NOT_ACTIVE",
-                  "Message": "Selected card is not active"
+                  "Status": 400,
+                  "Error": "BAD_REQUEST",
+                  "Message": "Invalid or missing fields",
+                  "Fields": [
+                    "data.HP"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "FORM_SEND_FAILED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                },
+                "example": {
+                  "Status": 500,
+                  "Error": "FORM_SEND_FAILED",
+                  "Message": "Form could not be sent"
                 }
               }
             }
@@ -603,6 +764,510 @@
           }
         ]
       }
+    },
+    "/test/push-session": {
+      "post": {
+        "tags": [
+          "Mock helpers"
+        ],
+        "summary": "TEST: authenticate the customer (mock Commbox/Meitav creates the MToken and pushes it back)",
+        "operationId": "push_session_test_push_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushSessionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Push Session Test Push Session Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test/push-log": {
+      "get": {
+        "tags": [
+          "Mock helpers"
+        ],
+        "summary": "TEST: results of the session callbacks",
+        "operationId": "push_log_test_push_log_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Push Log Test Push Log Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/ExternalProvider/ValidateExToken": {
+      "post": {
+        "tags": [
+          "FMR (Swagger v1)"
+        ],
+        "summary": "Validate the external session token (HTTP status = Status)",
+        "operationId": "validate_ex_token_api_ExternalProvider_ValidateExToken_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "ExSessionID": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "title": "Exsessionid"
+                  },
+                  "mjwtToken": {
+                    "type": "string",
+                    "maxLength": 16384,
+                    "minLength": 1,
+                    "title": "Mjwttoken",
+                    "description": "Any value works. `invalid`/`expired` → 400, `active-request` → 430, `duplicate` → 432, `no-card` → 436."
+                  }
+                },
+                "type": "object",
+                "required": [
+                  "ExSessionID",
+                  "mjwtToken"
+                ],
+                "title": "ValidateExRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/ExternalProvider/AccountVerification": {
+      "post": {
+        "tags": [
+          "FMR (Swagger v1)"
+        ],
+        "summary": "Verify by trade account OR bank details (returns an array)",
+        "operationId": "account_verification_api_ExternalProvider_AccountVerification_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "RequestID": {
+                    "type": "string",
+                    "title": "Requestid"
+                  },
+                  "rjwtToken": {
+                    "type": "string",
+                    "maxLength": 16384,
+                    "minLength": 1,
+                    "title": "Rjwttoken"
+                  },
+                  "Account": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 10
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Account",
+                    "examples": [
+                      "012345"
+                    ]
+                  },
+                  "Bank": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Bank",
+                    "examples": [
+                      "012"
+                    ]
+                  },
+                  "Branch": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Branch",
+                    "examples": [
+                      "600"
+                    ]
+                  },
+                  "BankAccount": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Bankaccount",
+                    "examples": [
+                      "123456"
+                    ]
+                  }
+                },
+                "type": "object",
+                "required": [
+                  "RequestID",
+                  "rjwtToken"
+                ],
+                "title": "AccountVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/ExternalProvider/ResetPassword": {
+      "post": {
+        "tags": [
+          "FMR (Swagger v1)"
+        ],
+        "summary": "Request a password-reset deep link",
+        "operationId": "reset_password_api_ExternalProvider_ResetPassword_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "RequestID": {
+                    "type": "string",
+                    "title": "Requestid"
+                  },
+                  "rjwtToken": {
+                    "type": "string",
+                    "maxLength": 16384,
+                    "minLength": 1,
+                    "title": "Rjwttoken"
+                  },
+                  "SubCard": {
+                    "type": "string",
+                    "maxLength": 3,
+                    "minLength": 3,
+                    "title": "Subcard",
+                    "examples": [
+                      "418"
+                    ]
+                  }
+                },
+                "type": "object",
+                "required": [
+                  "RequestID",
+                  "rjwtToken",
+                  "SubCard"
+                ],
+                "title": "SubCardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/ExternalProvider/ResetPasswordCard": {
+      "post": {
+        "tags": [
+          "FMR (Swagger v1)"
+        ],
+        "summary": "Resolve a password-reset deep link to a card",
+        "operationId": "reset_password_card_api_ExternalProvider_ResetPasswordCard_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "RequestID": {
+                    "type": "string",
+                    "title": "Requestid"
+                  },
+                  "rjwtToken": {
+                    "type": "string",
+                    "maxLength": 16384,
+                    "minLength": 1,
+                    "title": "Rjwttoken"
+                  },
+                  "DeeplinkID": {
+                    "type": "string",
+                    "title": "Deeplinkid"
+                  }
+                },
+                "type": "object",
+                "required": [
+                  "RequestID",
+                  "rjwtToken",
+                  "DeeplinkID"
+                ],
+                "title": "ResetPasswordCardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/ExternalProvider/ForgotUsername": {
+      "post": {
+        "tags": [
+          "FMR (Swagger v1)"
+        ],
+        "summary": "Request username recovery through a secure message",
+        "operationId": "forgot_username_api_ExternalProvider_ForgotUsername_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "RequestID": {
+                    "type": "string",
+                    "title": "Requestid"
+                  },
+                  "rjwtToken": {
+                    "type": "string",
+                    "maxLength": 16384,
+                    "minLength": 1,
+                    "title": "Rjwttoken"
+                  },
+                  "SubCard": {
+                    "type": "string",
+                    "maxLength": 3,
+                    "minLength": 3,
+                    "title": "Subcard",
+                    "examples": [
+                      "418"
+                    ]
+                  }
+                },
+                "type": "object",
+                "required": [
+                  "RequestID",
+                  "rjwtToken",
+                  "SubCard"
+                ],
+                "title": "SubCardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/ExternalProvider/SecureMessage/{token}": {
+      "get": {
+        "tags": [
+          "FMR (Swagger v1)"
+        ],
+        "summary": "Secure message unlock form (HTML)",
+        "operationId": "secure_message_api_ExternalProvider_SecureMessage__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ExternalProvider/SecureMessage/{token}/Unlock": {
+      "post": {
+        "tags": [
+          "FMR (Swagger v1)"
+        ],
+        "summary": "Unlock the secure message with the client ID number (HTML)",
+        "operationId": "unlock_api_ExternalProvider_SecureMessage__token__Unlock_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -620,21 +1285,82 @@
             "description": "From ValidateExToken"
           },
           "Account": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Account",
             "description": "Trade account number, exactly 6 digits (pad with leading zeros)",
             "examples": [
               "012345"
+            ]
+          },
+          "Bank": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank",
+            "description": "Bank number, up to 3 digits",
+            "examples": [
+              "012"
+            ]
+          },
+          "BankBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bankbranch",
+            "description": "Branch number, up to 3 digits",
+            "examples": [
+              "600"
+            ]
+          },
+          "BankAccount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bankaccount",
+            "description": "Bank account number, up to 9 digits",
+            "examples": [
+              "123456"
             ]
           }
         },
         "type": "object",
         "required": [
           "RequestID",
-          "RToken",
-          "Account"
+          "RToken"
         ],
-        "title": "AccountVerificationIn"
+        "title": "AccountVerificationIn",
+        "description": "Send EITHER the trade account number OR all three bank (עו\"ש) fields, never both."
       },
       "ActionIn": {
         "properties": {
@@ -761,6 +1487,128 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "PushSessionIn": {
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id",
+            "description": "Encore conversation UUID ({{system__conversation_id}} in the flow)"
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent",
+            "description": "reset_password / recover_username / both (logged only)"
+          },
+          "mtoken": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mtoken",
+            "description": "Optional override; by default the mock generates one"
+          },
+          "ex_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ex Session Id",
+            "description": "Optional override; by default the mock generates one"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conversation_id"
+        ],
+        "title": "PushSessionIn",
+        "description": "The agent asks \"authenticate this customer\". The mock plays Commbox + Meitav: it creates the MToken itself."
+      },
+      "SendFormIn": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "description": "Recipient. A `@fail.com` / `@error.com` address simulates a failed send (500).",
+            "examples": [
+              "customer@example.com"
+            ]
+          },
+          "formName": {
+            "type": "string",
+            "enum": [
+              "kubiot",
+              "nispah5"
+            ],
+            "title": "Formname",
+            "description": "Selects the `data` shape"
+          },
+          "data": {
+            "title": "Data",
+            "description": "Form fields. `kubiot` → KubiotData, `nispah5` → Nispah5Data",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/KubiotData"
+              },
+              {
+                "$ref": "#/components/schemas/Nispah5Data"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "formName",
+          "data"
+        ],
+        "title": "SendFormIn"
+      },
+      "SendFormOut": {
+        "properties": {
+          "Status": {
+            "type": "integer",
+            "title": "Status",
+            "default": 200,
+            "examples": [
+              200
+            ]
+          },
+          "Message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "FormName": {
+            "type": "string",
+            "title": "Formname"
+          },
+          "ReferenceID": {
+            "type": "string",
+            "title": "Referenceid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "Message",
+          "FormName",
+          "ReferenceID"
+        ],
+        "title": "SendFormOut"
       },
       "TokenOut": {
         "properties": {
@@ -893,6 +1741,286 @@
           "LastName"
         ],
         "title": "VerificationOut"
+      },
+      "KubiotData": {
+        "description": "`data` for formName = kubiot (pension / study-fund enrolment). Field names follow the real API, typos included.",
+        "properties": {
+          "new_filldate": {
+            "description": "Fill date, DD/MM/YYYY",
+            "examples": [
+              "20/11/2025"
+            ],
+            "title": "New Filldate",
+            "type": "string"
+          },
+          "fullName": {
+            "description": "Employee full name",
+            "examples": [
+              "ישראל ישראלי"
+            ],
+            "title": "Fullname",
+            "type": "string"
+          },
+          "idNumber": {
+            "description": "Employee ID number (ת.ז.)",
+            "examples": [
+              "012345678"
+            ],
+            "title": "Idnumber",
+            "type": "string"
+          },
+          "employeName": {
+            "description": "Employer name (sic: real API field name)",
+            "examples": [
+              "מיטב"
+            ],
+            "title": "Employename",
+            "type": "string"
+          },
+          "HP": {
+            "description": "Employer company number (ח.פ.)",
+            "examples": [
+              "516583036"
+            ],
+            "title": "Hp",
+            "type": "string"
+          },
+          "monthlyIncome": {
+            "description": "Monthly salary, formatted",
+            "examples": [
+              "3,000"
+            ],
+            "title": "Monthlyincome",
+            "type": "string"
+          },
+          "product": {
+            "description": "Product 1",
+            "examples": [
+              "פנסיה מקיפה"
+            ],
+            "title": "Product",
+            "type": "string"
+          },
+          "salaryCategory": {
+            "description": "Salary category for product 1",
+            "examples": [
+              "משכורת בסיסית"
+            ],
+            "title": "Salarycategory",
+            "type": "string"
+          },
+          "ma": {
+            "description": "Fund tax-approval number (מ.ה.) for product 1",
+            "examples": [
+              "163"
+            ],
+            "title": "Ma",
+            "type": "string"
+          },
+          "ddovedPayment": {
+            "description": "Employee contribution, product 1",
+            "examples": [
+              "6%"
+            ],
+            "title": "Ddovedpayment",
+            "type": "string"
+          },
+          "ddcompensation": {
+            "description": "Severance contribution, product 1",
+            "examples": [
+              "6%"
+            ],
+            "title": "Ddcompensation",
+            "type": "string"
+          },
+          "ddmaasikPayment": {
+            "description": "Employer contribution, product 1",
+            "examples": [
+              "6.5%"
+            ],
+            "title": "Ddmaasikpayment",
+            "type": "string"
+          },
+          "insureIncome": {
+            "description": "Insured salary, product 1",
+            "examples": [
+              "2,000"
+            ],
+            "title": "Insureincome",
+            "type": "string"
+          },
+          "product2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Product 2",
+            "examples": [
+              "השתלמות"
+            ],
+            "title": "Product2"
+          },
+          "salaryCategory2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "examples": [
+              "משכורת בסיסית"
+            ],
+            "title": "Salarycategory2"
+          },
+          "ma2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "examples": [
+              "880"
+            ],
+            "title": "Ma2"
+          },
+          "ddovedPayment2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "examples": [
+              "2.5%"
+            ],
+            "title": "Ddovedpayment2"
+          },
+          "ddmaasikPayment2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "examples": [
+              "7.5%"
+            ],
+            "title": "Ddmaasikpayment2"
+          },
+          "insureIncome2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "examples": [
+              "3,000"
+            ],
+            "title": "Insureincome2"
+          }
+        },
+        "required": [
+          "new_filldate",
+          "fullName",
+          "idNumber",
+          "employeName",
+          "HP",
+          "monthlyIncome",
+          "product",
+          "salaryCategory",
+          "ma",
+          "ddovedPayment",
+          "ddcompensation",
+          "ddmaasikPayment",
+          "insureIncome"
+        ],
+        "title": "KubiotData",
+        "type": "object"
+      },
+      "Nispah5Data": {
+        "description": "`data` for formName = nispah5 (נספח ה': end-of-employment notice).",
+        "properties": {
+          "emploeeName": {
+            "description": "Employee full name (sic: real API field name)",
+            "examples": [
+              "ישראל ישראלי"
+            ],
+            "title": "Emploeename",
+            "type": "string"
+          },
+          "idNumber": {
+            "description": "Employee ID number (ת.ז.)",
+            "examples": [
+              "012345678"
+            ],
+            "title": "Idnumber",
+            "type": "string"
+          },
+          "maasikName": {
+            "description": "Employer name",
+            "examples": [
+              "מיטב"
+            ],
+            "title": "Maasikname",
+            "type": "string"
+          },
+          "HP": {
+            "description": "Employer company number (ח.פ.)",
+            "examples": [
+              "516583036"
+            ],
+            "title": "Hp",
+            "type": "string"
+          },
+          "product": {
+            "description": "Product",
+            "examples": [
+              "מיטב פנסיה מקיפה"
+            ],
+            "title": "Product",
+            "type": "string"
+          },
+          "accountNum": {
+            "description": "Account number",
+            "examples": [
+              "18-012345678"
+            ],
+            "title": "Accountnum",
+            "type": "string"
+          }
+        },
+        "required": [
+          "emploeeName",
+          "idNumber",
+          "maasikName",
+          "HP",
+          "product",
+          "accountNum"
+        ],
+        "title": "Nispah5Data",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -910,18 +2038,12 @@
       "description": "Mocked FMR endpoints"
     },
     {
-      "name": "Mock helpers",
-      "description": "Test-only utilities (not part of FMR)"
-    }
-  ],
-  "servers": [
-    {
-      "url": "https://fmr-mock.onrender.com",
-      "description": "Render"
+      "name": "Forms",
+      "description": "Mocked Meitav chat-integration-api (send-form-by-email)"
     },
     {
-      "url": "http://localhost:8080",
-      "description": "Local"
+      "name": "Mock helpers",
+      "description": "Test-only utilities (not part of FMR)"
     }
   ]
 }

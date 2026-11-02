@@ -76,6 +76,49 @@ Any MToken works, except `invalid` or `expired` → `401 INVALID_MTOKEN`.
 - ResetPassword → `210` (SMS sent)
 - RecoverUserID → `209` (email sent)
 
+### `POST /api/formemail/send-form-by-email`
+
+Mock of Meitav's `chat-integration-api` form-email endpoint (from the "PROJECT INSAIT - forms" Postman collection). Stand-alone: no `RequestID`/`RToken`. The real API also needs the customer's bearer token plus the `x-ibm-client-id` / `x-ibm-client-secret` gateway headers; the mock ignores them.
+
+Envelope: `{ "email", "formName", "data" }`. `formName` selects the `data` shape:
+
+**`kubiot`** (pension / study-fund enrolment) — the `*2` fields are an optional second product:
+
+```json
+{
+  "email": "customer@example.com",
+  "formName": "kubiot",
+  "data": {
+    "new_filldate": "20/11/2025", "fullName": "ישראל ישראלי", "idNumber": "012345678",
+    "employeName": "מיטב", "HP": "516583036", "monthlyIncome": "3,000",
+    "product": "פנסיה מקיפה", "salaryCategory": "משכורת בסיסית", "ma": "163",
+    "ddovedPayment": "6%", "ddcompensation": "6%", "ddmaasikPayment": "6.5%", "insureIncome": "2,000",
+    "product2": "השתלמות", "salaryCategory2": "משכורת בסיסית", "ma2": "880",
+    "ddovedPayment2": "2.5%", "ddmaasikPayment2": "7.5%", "insureIncome2": "3,000"
+  }
+}
+```
+
+**`nispah5`** (נספח ה׳, end of employment):
+
+```json
+{
+  "email": "customer@example.com",
+  "formName": "nispah5",
+  "data": {
+    "emploeeName": "ישראל ישראלי", "idNumber": "012345678", "maasikName": "מיטב",
+    "HP": "516583036", "product": "מיטב פנסיה מקיפה", "accountNum": "18-012345678"
+  }
+}
+```
+
+Field names (including the typos `employeName` / `emploeeName`) are exactly as in the real API. All values are strings.
+
+→ `200` `{ "Status": 200, "Message": "Form sent by email", "FormName": "kubiot", "ReferenceID": "<uuid>" }`. The form shows up in `GET /mock/outbox` as type `form_email`.
+
+- Any email works, except one at `@fail.com` or `@error.com` → `500 FORM_SEND_FAILED`
+- Unknown `formName`, or `data` missing a required field → `400 BAD_REQUEST`
+
 ### Status codes
 
 | Code | Error | When |
@@ -91,6 +134,7 @@ Any MToken works, except `invalid` or `expired` → `401 INVALID_MTOKEN`.
 | 423 | `TOO_MANY_ATTEMPTS` | Max wrong account numbers reached |
 | 427 | `NO_EMAIL` | RecoverUserID on account with Email = N |
 | 436 | `CARD_NOT_ACTIVE` | ResetPassword with an inactive card (RecoverUserID doesn't check card status, per spec) |
+| 500 | `FORM_SEND_FAILED` | `send-form-by-email` with a `@fail.com` / `@error.com` email |
 
 **Real FMR codes:** 209, 210, 427, 433 and 436 come from the spec. 400 (`CARD_NOT_FOUND`), 401, 404 and 423 are placeholders until FMR confirms their error codes.
 
@@ -178,6 +222,14 @@ curl -s $B/AccountVerification -H 'Content-Type: application/json' \
 
 curl -s $B/ResetPassword -H 'Content-Type: application/json' \
   -d "{\"RequestID\":\"$RID\",\"RToken\":\"$RT\",\"UserId\":\"418\"}"
+```
+
+Form email:
+
+```bash
+curl -s $B/api/formemail/send-form-by-email -H 'Content-Type: application/json' \
+  -d '{"email":"customer@example.com","formName":"nispah5","data":{"emploeeName":"ישראל ישראלי","idNumber":"012345678","maasikName":"מיטב","HP":"516583036","product":"מיטב פנסיה מקיפה","accountNum":"18-012345678"}}'
+# → 200. Use "email":"customer@fail.com" to get 500.
 ```
 
 Add `-H 'X-API-Key: <key>'` if `MOCK_API_KEY` is set.
