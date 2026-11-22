@@ -72,14 +72,12 @@ def test_bank_details_use_branch_field():
     assert verify(login(), Account="001234", Bank="012", Branch="600", BankAccount="123456").json()[0]["Status"] == 435
 
 
-def test_reset_password_deeplink_and_card():
+def test_reset_password_deeplink():
     t = login()
     verify(t, Account="012345")
     r = c.post(f"{V1}/ResetPassword", json=auth(t, SubCard="418"))
     assert r.status_code == 200 and r.json()["Status"] == 210
-    link_id = r.json()["DeepLink"].split("DeeplinkID=")[1]
-    r = c.post(f"{V1}/ResetPasswordCard", json=auth(t, DeeplinkID=link_id))
-    assert r.status_code == 200 and r.json() == {"RequestID": t["RequestID"], "Status": 200, "CardID": "418"}
+    assert "DeeplinkID=" in r.json()["DeepLink"]
 
 
 def test_reset_password_inactive_card_436():
@@ -95,27 +93,12 @@ def test_reset_password_before_verification_433():
     assert r.status_code == 200 and r.json()["Status"] == 433
 
 
-def test_reset_password_card_unknown_link():
-    t = login()
-    verify(t, Account="001234")
-    r = c.post(f"{V1}/ResetPasswordCard", json=auth(t, DeeplinkID="11111111-1111-1111-1111-111111111111"))
-    assert r.status_code == 401 and r.json()["Status"] == 404
-
-
-def test_forgot_username_secure_message_flow():
+def test_forgot_username_secure_message():
     t = login()
     verify(t, Account="001234")
     r = c.post(f"{V1}/ForgotUsername", json=auth(t, SubCard="771"))
     assert r.status_code == 200 and r.json()["Status"] == 209
-    link = c.get("/mock/outbox").json()["sent"][-1]["link"]
-    token = link.rsplit("/", 1)[1]
-    assert c.get(f"{V1}/SecureMessage/{token}").status_code == 200
-    bad = c.post(f"{V1}/SecureMessage/{token}/Unlock", content="clientID=123",
-                 headers={"Content-Type": "application/x-www-form-urlencoded"})
-    assert bad.status_code == 403
-    ok = c.post(f"{V1}/SecureMessage/{token}/Unlock", content="clientID=000000018",
-                headers={"Content-Type": "application/x-www-form-urlencoded"})
-    assert ok.status_code == 200 and "dana.levi" in ok.text
+    assert main.OUTBOX[-1]["type"] == "secure_message"
 
 
 def test_forgot_username_no_email_427():
@@ -137,13 +120,15 @@ def test_bad_token_is_404():
     assert r.status_code == 401 and r.json()[0]["Status"] == 404
 
 
-def test_old_routes_still_work():
-    r = c.post("/ValidateExToken", json={"ExSessionID": "g", "MToken": "x"})
-    assert r.status_code == 200 and "RToken" in r.json()
+def test_only_used_routes_remain():
+    paths = set(c.get("/openapi.json").json()["paths"])
+    assert paths == {f"{V1}/ValidateExToken", f"{V1}/AccountVerification", f"{V1}/ResetPassword",
+                     f"{V1}/ForgotUsername", "/api/formemail/send-form-by-email"}
 
 
 def test_v1_needs_api_key(monkeypatch):
     monkeypatch.setattr(main, "API_KEY", "secret")
+    assert c.get("/health").status_code == 200
     assert c.post(f"{V1}/ValidateExToken", json={"ExSessionID": "g", "mjwtToken": "x"}).status_code == 401
 
 

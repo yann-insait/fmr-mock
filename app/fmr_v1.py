@@ -1,15 +1,13 @@
 """FMR ExternalProvider API, shaped like FMR's Swagger prototype (20.10).
 
-Routes live under /api/ExternalProvider/* next to the older mock routes in main.py (which the
-Encore staging tools still call), and share their accounts, sessions and outbox.
+Routes live under /api/ExternalProvider/* and use the accounts, sessions and outbox kept in main.py.
 
-Differences from the older routes, all taken from the Swagger:
+Contract details, all taken from the Swagger:
     - field names: mjwtToken / rjwtToken (were MToken / RToken), Branch (was BankBranch), SubCard (was UserId)
     - AccountVerification returns an ARRAY of results; cards are CardPermission[{SubCard, Permission}]; Tik (was TIK)
-    - ResetPassword returns a DeepLink; ResetPasswordCard resolves the deep link to the card
-    - username recovery is ForgotUsername + a secure-message page unlocked with the client ID number
+    - ResetPassword returns a DeepLink; ForgotUsername sends a secure message
     - HTTP status: ValidateExToken = Status; the other endpoints = 200, except 401 for Status 404/408
-      (and 403 for 433 on ResetPasswordCard). Invalid request = empty HTTP 400.
+      Invalid request = empty HTTP 400.
     - no Error / Message / AttemptsLeft fields (not in the Swagger)
 
 FMR has not listed the business Status values for these endpoints. The ones used here are the
@@ -18,15 +16,13 @@ older mock's (spec V10.1) codes: 404 not found, 408 session expired, 418, 423, 4
 
 from __future__ import annotations
 
-import html
 import secrets
 import time
 import uuid
 from typing import Any, Optional, Union
-from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from app import main as core
@@ -41,13 +37,6 @@ PERMISSIONS = {"00": "None", "01": "FullExecution", "02": "InformationOnly", "03
 TOKEN_STATUS = {"invalid": 400, "expired": 400, "active-request": 430, "duplicate": 432, "no-card": 436,
                 "session-expired": 408}
 
-DEEPLINKS: dict[str, dict[str, Any]] = {}         # DeeplinkID -> {request_id, card}
-SECURE_MESSAGES: dict[str, dict[str, Any]] = {}   # token -> {account}
-
-
-def reset_v1_state() -> None:
-    DEEPLINKS.clear()
-    SECURE_MESSAGES.clear()
 
 
 # --------------------------------------------------------------------------- models (Swagger definitions)
@@ -72,12 +61,6 @@ class SubCardRequest(BaseModel):
     RequestID: str
     rjwtToken: str = Field(..., min_length=1, max_length=16384)
     SubCard: str = Field(..., min_length=3, max_length=3, examples=["418"])
-
-
-class ResetPasswordCardRequest(BaseModel):
-    RequestID: str
-    rjwtToken: str = Field(..., min_length=1, max_length=16384)
-    DeeplinkID: str
 
 
 # --------------------------------------------------------------------------- helpers
@@ -230,33 +213,11 @@ async def reset_password(request: Request) -> Response:
             out["Status"] = 436
         elif status == 0:
             link_id = str(uuid.uuid4())
-            DEEPLINKS[link_id] = {"request_id": body.RequestID, "account": acc["account"], "card": card["last3"]}
             out.update(Status=210, DeepLink=f"{request.base_url}reset?DeeplinkID={link_id}")
             core.OUTBOX.append({"type": "deeplink", "account": acc["account"], "card": card["last3"],
                                 "request_id": body.RequestID, "deeplink_id": link_id,
                                 "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
         return JSONResponse(out, status_code=_http(out["Status"]))
-
-
-@router.post("/ResetPasswordCard", summary="Resolve a password-reset deep link to a card",
-             dependencies=PROTECTED, openapi_extra=_doc_body(ResetPasswordCardRequest))
-async def reset_password_card(request: Request) -> Response:
-    body = await _parse(request, ResetPasswordCardRequest)
-    if body is None or not _valid_guid(body.RequestID) or not _valid_guid(body.DeeplinkID):
-        return _empty_400()
-    with core._lock:
-        s, bad = _session(body)
-        status, card_id = bad or 200, None
-        if not bad:
-            link = DEEPLINKS.get(body.DeeplinkID)
-            if not link or link["request_id"] != body.RequestID:
-                status = 404
-            elif not s["verified_account"]:
-                status = 433
-            else:
-                card_id = link["card"]
-        return JSONResponse({"RequestID": body.RequestID, "Status": status, "CardID": card_id},
-                            status_code=_http(status, {433: 403}))
 
 
 @router.post("/ForgotUsername", summary="Request username recovery through a secure message",
@@ -271,41 +232,10 @@ async def forgot_username(request: Request) -> Response:
             status = 427
         elif status == 0:
             status = 209
-            token = secrets.token_urlsafe(24)
-            SECURE_MESSAGES[token] = {"account": acc["account"]}
             core.OUTBOX.append({"type": "secure_message", "account": acc["account"], "card": card["last3"],
                                 "request_id": body.RequestID,
-                                "link": f"{request.base_url}api/ExternalProvider/SecureMessage/{token}",
                                 "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
         return JSONResponse({"RequestID": body.RequestID, "rjwtToken": s["rtoken"] if s else None,
                              "Status": status}, status_code=_http(status))
 
 
-def _page(title: str, text: str, status: int = 200) -> HTMLResponse:
-    return HTMLResponse(f"<!doctype html><html lang='he' dir='rtl'><meta charset='utf-8'><title>{title}</title>"
-                        f"<body style='font-family:sans-serif;max-width:28rem;margin:3rem auto'>{text}</body></html>",
-                        status_code=status)
-
-
-# Public pages (no API key): the customer opens them from the email.
-@router.get("/SecureMessage/{token}", summary="Secure message unlock form (HTML)", response_class=HTMLResponse)
-def secure_message(token: str) -> HTMLResponse:
-    if token not in SECURE_MESSAGES:
-        return _page("שגיאה", "<p>הקישור אינו תקין.</p>", 400)
-    return _page("הודעה מאובטחת",
-                 f"<h1>הודעה מאובטחת</h1><form method='post' action='{html.escape(token)}/Unlock'>"
-                 "<label>מספר תעודת זהות <input name='clientID' required></label> <button>הצגה</button></form>")
-
-
-@router.post("/SecureMessage/{token}/Unlock", summary="Unlock the secure message with the client ID number (HTML)",
-             response_class=HTMLResponse)
-async def unlock(token: str, request: Request) -> HTMLResponse:
-    msg = SECURE_MESSAGES.get(token)
-    if not msg:
-        return _page("שגיאה", "<p>הקישור אינו תקין.</p>", 400)
-    form = parse_qs((await request.body()).decode("utf-8"))
-    client_id = (form.get("clientID") or [""])[0].strip()
-    acc = core.ACCOUNTS[msg["account"]]
-    if client_id != acc.get("id_number"):
-        return _page("שגיאה", "<p>לא ניתן להציג את ההודעה.</p>", 403)
-    return _page("שם המשתמש", f"<h1>שם המשתמש שלך</h1><p><b>{html.escape(acc.get('username', ''))}</b></p>")

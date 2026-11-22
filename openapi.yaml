@@ -4,7 +4,9 @@ info:
   description: '
 
     Mock of the **FMR** APIs used by the Meitav Trade agent for **password reset**
-    and **username recovery**.
+    and **username recovery**,
+
+    shaped like FMR''s Swagger v1 (`/api/ExternalProvider/*`).
 
 
     **Authorize first:** click **Authorize** and paste the API key (`MOCK_API_KEY`).
@@ -12,12 +14,13 @@ info:
 
     ### Flow
 
-    1. `ValidateExToken`: get `RequestID` + `RToken`
+    1. `ValidateExToken`: get `RequestID` + `rjwtToken`
 
-    2. `AccountVerification`: verify the 6-digit trade account, get the cards
+    2. `AccountVerification`: verify the 6-digit trade account (or bank details),
+    get the cards
 
-    3. `ResetPassword` (→ 210, SMS) or `RecoverUserID` (→ 209, email) with `UserId`
-    = card''s last 3 digits
+    3. `ResetPassword` (→ 210, deep link) or `ForgotUsername` (→ 209, secure message)
+    with `SubCard` = card''s last 3 digits
 
 
     ### Test accounts
@@ -30,18 +33,18 @@ info:
 
     | `012345` | 025, 418 | Two cards: customer picks |
 
-    | `054321` | 309 | RecoverUserID → **427** (no email) |
+    | `054321` | 309 | ForgotUsername → **427** (no email) |
 
     | `067890` | 552 (inactive), 860 | 552 → **436** |
 
-    | `098765` | 144 | TIK = Y (managed account) |
+    | `098765` | 144 | Tik = Y (managed account) |
 
-    | any other | – | **404**, 3 attempts then **423** |
+    | any other | – | **404** (HTTP 401), 3 attempts then **423** |
 
 
     ### Bank details (instead of `Account`)
 
-    | Bank / Branch / Account | Trade account | Result |
+    | Bank / Branch / BankAccount | Trade account | Result |
 
     |---|---|---|
 
@@ -49,7 +52,7 @@ info:
 
     | `010` / `800` / `554433` | 012345 | Two cards (025, 418) |
 
-    | `020` / `456` / `98765` | 054321 | No email (RecoverUserID → 427) |
+    | `020` / `456` / `98765` | 054321 | No email (ForgotUsername → 427) |
 
     | `011` / `042` / `777888` | 067890 | 552 inactive, 860 |
 
@@ -70,369 +73,9 @@ info:
 
     Any recipient works; `@fail.com` / `@error.com` → **500**.
 
-
-    ### Status codes
-
-    By default the HTTP status equals the FMR `Status` (e.g. 210, 436). If the server
-    runs with
-
-    `FMR_STATUS_IN_HTTP=false`, every response is HTTP 200 and the code is only in
-    `Status`.
-
-
-    Only **209, 210, 427, 433, 436** come from the spec; other error codes are placeholders
-    until FMR confirms them.
-
     '
   version: 1.0.0
 paths:
-  /health:
-    get:
-      tags:
-      - Mock helpers
-      summary: Health check (no API key)
-      operationId: health_health_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                type: object
-                title: Response Health Health Get
-  /ValidateExToken:
-    post:
-      tags:
-      - FMR
-      summary: Validate the MToken and open an FMR session
-      description: Returns the RequestID + RToken used on every later call. They don't
-        expire.
-      operationId: validate_ex_token_ValidateExToken_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ValidateExTokenIn'
-            examples:
-              success:
-                summary: Successful validation
-                value:
-                  ExSessionID: test-1
-                  MToken: eyJ.mock
-              failed:
-                summary: Failed login (401)
-                value:
-                  ExSessionID: test-1
-                  MToken: invalid
-        required: true
-      responses:
-        '200':
-          description: Session opened
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokenOut'
-        '400':
-          description: BAD_REQUEST
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 400
-                Error: BAD_REQUEST
-                Message: Invalid or missing fields
-                Fields:
-                - RToken
-        '401':
-          description: INVALID_MTOKEN
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 401
-                Error: INVALID_MTOKEN
-                Message: MToken rejected (invalid)
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-      security:
-      - APIKeyHeader: []
-  /AccountVerification:
-    post:
-      tags:
-      - FMR
-      summary: Verify the customer by trade account OR bank details
-      description: 'Send **either** `Account` (6 digits) **or** all three bank fields
-        `Bank` + `BankBranch` + `BankAccount`.
-
-
-        Trade account and bank details have separate attempt counters per RequestID
-        (`MAX_VERIFY_ATTEMPTS`, `MAX_BANK_ATTEMPTS`).'
-      operationId: account_verification_AccountVerification_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AccountVerificationIn'
-            examples:
-              account:
-                summary: By trade account
-                value:
-                  RequestID: <RequestID>
-                  RToken: <RToken>
-                  Account: '012345'
-              bank:
-                summary: By bank details
-                value:
-                  RequestID: <RequestID>
-                  RToken: <RToken>
-                  Bank: '012'
-                  BankBranch: '600'
-                  BankAccount: '123456'
-        required: true
-      responses:
-        '200':
-          description: Customer identified
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VerificationOut'
-        '400':
-          description: INVALID_ACCOUNT_FORMAT
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 400
-                Error: INVALID_ACCOUNT_FORMAT
-                Message: Account must be exactly 6 digits
-        '401':
-          description: INVALID_TOKEN
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 401
-                Error: INVALID_TOKEN
-                Message: RequestID/RToken not recognised
-        '404':
-          description: ACCOUNT_NOT_FOUND
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 404
-                Error: ACCOUNT_NOT_FOUND
-                Message: Account does not match the authenticated customer
-                AttemptsLeft: 2
-        '418':
-          description: BANK_DETAILS_MULTIPLE_ACCOUNTS
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 418
-                Error: BANK_DETAILS_MULTIPLE_ACCOUNTS
-                Message: Bank details match more than one trade account
-        '423':
-          description: TOO_MANY_ATTEMPTS
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 423
-                Error: TOO_MANY_ATTEMPTS
-                Message: Maximum verification attempts reached
-                AttemptsLeft: 0
-        '434':
-          description: PARTIAL_BANK_DETAILS
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 434
-                Error: PARTIAL_BANK_DETAILS
-                Message: Bank, BankBranch and BankAccount are all required
-        '435':
-          description: ACCOUNT_AND_BANK_DETAILS
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 435
-                Error: ACCOUNT_AND_BANK_DETAILS
-                Message: Send either the trade account or the bank details, not both
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-      security:
-      - APIKeyHeader: []
-  /ResetPassword:
-    post:
-      tags:
-      - FMR
-      summary: Send the password-reset SMS
-      operationId: reset_password_ResetPassword_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ActionIn'
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '210':
-          description: SMS sent
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActionOut'
-              example:
-                Status: 210
-                Message: Password reset SMS sent to the verified phone number
-        '400':
-          description: CARD_NOT_FOUND
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 400
-                Error: CARD_NOT_FOUND
-                Message: UserId does not match a card on this account
-        '401':
-          description: INVALID_TOKEN
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 401
-                Error: INVALID_TOKEN
-                Message: RequestID/RToken not recognised
-        '433':
-          description: NOT_IDENTIFIED
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 433
-                Error: NOT_IDENTIFIED
-                Message: Customer not identified by trade account or bank details
-        '436':
-          description: CARD_NOT_ACTIVE
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 436
-                Error: CARD_NOT_ACTIVE
-                Message: Selected card is not active
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-      security:
-      - APIKeyHeader: []
-  /RecoverUserID:
-    post:
-      tags:
-      - FMR
-      summary: Send the username-recovery email
-      operationId: recover_user_id_RecoverUserID_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ActionIn'
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '209':
-          description: Email sent
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActionOut'
-              example:
-                Status: 209
-                Message: Username recovery email sent
-        '400':
-          description: CARD_NOT_FOUND
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 400
-                Error: CARD_NOT_FOUND
-                Message: UserId does not match a card on this account
-        '401':
-          description: INVALID_TOKEN
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 401
-                Error: INVALID_TOKEN
-                Message: RequestID/RToken not recognised
-        '433':
-          description: NOT_IDENTIFIED
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 433
-                Error: NOT_IDENTIFIED
-                Message: Customer not identified by trade account or bank details
-        '427':
-          description: NO_EMAIL
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorOut'
-              example:
-                Status: 427
-                Error: NO_EMAIL
-                Message: No email on account; username cannot be sent
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-      security:
-      - APIKeyHeader: []
   /api/formemail/send-form-by-email:
     post:
       tags:
@@ -545,102 +188,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-      security:
-      - APIKeyHeader: []
-  /mock/accounts:
-    get:
-      tags:
-      - Mock helpers
-      summary: List test accounts
-      operationId: mock_accounts_mock_accounts_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                type: object
-                title: Response Mock Accounts Mock Accounts Get
-      security:
-      - APIKeyHeader: []
-  /mock/outbox:
-    get:
-      tags:
-      - Mock helpers
-      summary: SMS / emails sent so far
-      operationId: mock_outbox_mock_outbox_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                type: object
-                title: Response Mock Outbox Mock Outbox Get
-      security:
-      - APIKeyHeader: []
-  /mock/reset:
-    post:
-      tags:
-      - Mock helpers
-      summary: Clear sessions and outbox
-      operationId: mock_reset_mock_reset_post
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                type: object
-                title: Response Mock Reset Mock Reset Post
-      security:
-      - APIKeyHeader: []
-  /test/push-session:
-    post:
-      tags:
-      - Mock helpers
-      summary: 'TEST: authenticate the customer (mock Commbox/Meitav creates the MToken
-        and pushes it back)'
-      operationId: push_session_test_push_session_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PushSessionIn'
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                type: object
-                title: Response Push Session Test Push Session Post
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /test/push-log:
-    get:
-      tags:
-      - Mock helpers
-      summary: 'TEST: results of the session callbacks'
-      operationId: push_log_test_push_log_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                additionalProperties: true
-                type: object
-                title: Response Push Log Test Push Log Get
       security:
       - APIKeyHeader: []
   /api/ExternalProvider/ValidateExToken:
@@ -786,43 +333,6 @@ paths:
               schema: {}
       security:
       - APIKeyHeader: []
-  /api/ExternalProvider/ResetPasswordCard:
-    post:
-      tags:
-      - FMR (Swagger v1)
-      summary: Resolve a password-reset deep link to a card
-      operationId: reset_password_card_api_ExternalProvider_ResetPasswordCard_post
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                RequestID:
-                  type: string
-                  title: Requestid
-                rjwtToken:
-                  type: string
-                  maxLength: 16384
-                  minLength: 1
-                  title: Rjwttoken
-                DeeplinkID:
-                  type: string
-                  title: Deeplinkid
-              type: object
-              required:
-              - RequestID
-              - rjwtToken
-              - DeeplinkID
-              title: ResetPasswordCardRequest
-        required: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-      security:
-      - APIKeyHeader: []
   /api/ExternalProvider/ForgotUsername:
     post:
       tags:
@@ -864,160 +374,8 @@ paths:
               schema: {}
       security:
       - APIKeyHeader: []
-  /api/ExternalProvider/SecureMessage/{token}:
-    get:
-      tags:
-      - FMR (Swagger v1)
-      summary: Secure message unlock form (HTML)
-      operationId: secure_message_api_ExternalProvider_SecureMessage__token__get
-      parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Token
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            text/html:
-              schema:
-                type: string
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/ExternalProvider/SecureMessage/{token}/Unlock:
-    post:
-      tags:
-      - FMR (Swagger v1)
-      summary: Unlock the secure message with the client ID number (HTML)
-      operationId: unlock_api_ExternalProvider_SecureMessage__token__Unlock_post
-      parameters:
-      - name: token
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Token
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            text/html:
-              schema:
-                type: string
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
-    AccountVerificationIn:
-      properties:
-        RequestID:
-          type: string
-          title: Requestid
-          description: From ValidateExToken
-        RToken:
-          type: string
-          title: Rtoken
-          description: From ValidateExToken
-        Account:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Account
-          description: Trade account number, exactly 6 digits (pad with leading zeros)
-          examples:
-          - '012345'
-        Bank:
-          anyOf:
-          - type: string
-          - type: integer
-          - type: 'null'
-          title: Bank
-          description: Bank number, up to 3 digits
-          examples:
-          - '012'
-        BankBranch:
-          anyOf:
-          - type: string
-          - type: integer
-          - type: 'null'
-          title: Bankbranch
-          description: Branch number, up to 3 digits
-          examples:
-          - '600'
-        BankAccount:
-          anyOf:
-          - type: string
-          - type: integer
-          - type: 'null'
-          title: Bankaccount
-          description: Bank account number, up to 9 digits
-          examples:
-          - '123456'
-      type: object
-      required:
-      - RequestID
-      - RToken
-      title: AccountVerificationIn
-      description: Send EITHER the trade account number OR all three bank (עו"ש) fields,
-        never both.
-    ActionIn:
-      properties:
-        RequestID:
-          type: string
-          title: Requestid
-          description: From ValidateExToken
-        RToken:
-          type: string
-          title: Rtoken
-          description: From ValidateExToken
-        UserId:
-          type: string
-          title: Userid
-          description: Last 3 digits of the selected card
-          examples:
-          - '418'
-      type: object
-      required:
-      - RequestID
-      - RToken
-      - UserId
-      title: ActionIn
-    ActionOut:
-      properties:
-        Status:
-          type: integer
-          title: Status
-        Message:
-          type: string
-          title: Message
-      type: object
-      required:
-      - Status
-      - Message
-      title: ActionOut
-    CardOut:
-      properties:
-        Last3:
-          type: string
-          title: Last3
-        PermissionCode:
-          type: string
-          title: Permissioncode
-      type: object
-      required:
-      - Last3
-      - PermissionCode
-      title: CardOut
     ErrorOut:
       properties:
         Status:
@@ -1056,37 +414,6 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
-    PushSessionIn:
-      properties:
-        conversation_id:
-          type: string
-          title: Conversation Id
-          description: Encore conversation UUID ({{system__conversation_id}} in the
-            flow)
-        intent:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Intent
-          description: reset_password / recover_username / both (logged only)
-        mtoken:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Mtoken
-          description: Optional override; by default the mock generates one
-        ex_session_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Ex Session Id
-          description: Optional override; by default the mock generates one
-      type: object
-      required:
-      - conversation_id
-      title: PushSessionIn
-      description: 'The agent asks "authenticate this customer". The mock plays Commbox
-        + Meitav: it creates the MToken itself.'
     SendFormIn:
       properties:
         email:
@@ -1138,41 +465,6 @@ components:
       - FormName
       - ReferenceID
       title: SendFormOut
-    TokenOut:
-      properties:
-        Status:
-          type: integer
-          title: Status
-          default: 200
-          examples:
-          - 200
-        RequestID:
-          type: string
-          title: Requestid
-        RToken:
-          type: string
-          title: Rtoken
-      type: object
-      required:
-      - RequestID
-      - RToken
-      title: TokenOut
-    ValidateExTokenIn:
-      properties:
-        ExSessionID:
-          type: string
-          title: Exsessionid
-          description: GUID Meitav sends with the MToken
-        MToken:
-          type: string
-          title: Mtoken
-          description: JWT Meitav created after authenticating the customer. Any value
-            works; `invalid` or `expired` simulate a failed login.
-      type: object
-      required:
-      - ExSessionID
-      - MToken
-      title: ValidateExTokenIn
     ValidationError:
       properties:
         loc:
@@ -1199,41 +491,6 @@ components:
       - msg
       - type
       title: ValidationError
-    VerificationOut:
-      properties:
-        Status:
-          type: integer
-          title: Status
-          default: 200
-          examples:
-          - 200
-        Cards:
-          items:
-            $ref: '#/components/schemas/CardOut'
-          type: array
-          title: Cards
-        Email:
-          type: string
-          title: Email
-          description: 'Y/N: account has an email address'
-        TIK:
-          type: string
-          title: Tik
-          description: 'Y/N: IRA / managed account'
-        FirstName:
-          type: string
-          title: Firstname
-        LastName:
-          type: string
-          title: Lastname
-      type: object
-      required:
-      - Cards
-      - Email
-      - TIK
-      - FirstName
-      - LastName
-      title: VerificationOut
     KubiotData:
       description: '`data` for formName = kubiot (pension / study-fund enrolment).
         Field names follow the real API, typos included.'
@@ -1436,9 +693,5 @@ components:
       in: header
       name: X-API-Key
 tags:
-- name: FMR
-  description: Mocked FMR endpoints
 - name: Forms
   description: Mocked Meitav chat-integration-api (send-form-by-email)
-- name: Mock helpers
-  description: Test-only utilities (not part of FMR)
