@@ -123,7 +123,7 @@ def test_bad_token_is_404():
 def test_only_used_routes_remain():
     paths = set(c.get("/openapi.json").json()["paths"])
     assert paths == {f"{V1}/ValidateExToken", f"{V1}/AccountVerification", f"{V1}/ResetPassword",
-                     f"{V1}/ForgotUsername", "/api/formemail/send-form-by-email"}
+                     f"{V1}/ForgotUsername"}
 
 
 def test_v1_needs_api_key(monkeypatch):

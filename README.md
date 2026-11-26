@@ -1,6 +1,6 @@
 # FMR Mock API
 
-Mock of the four FMR APIs the Meitav Trade agent uses for password reset and username recovery, shaped like FMR's Swagger v1 (`/api/ExternalProvider/*`). Lets us build and test the Encore flow before FMR's real endpoints are available. Also mocks Meitav's `send-form-by-email`.
+Mock of the four FMR APIs the Meitav Trade agent uses for password reset and username recovery, shaped like FMR's Swagger v1 (`/api/ExternalProvider/*`). Lets us build and test the Encore flow before FMR's real endpoints are available.
 
 Field names and HTTP behaviour follow FMR's Swagger prototype (20.10). Business Status values are not in the Swagger; the mock keeps the spec V10.1 ones.
 
@@ -39,7 +39,6 @@ The repo includes `render.yaml`, so Render sets everything up from it.
 | `MOCK_API_KEY` | *(empty)* | If set, every request (except `/health`) needs header `X-API-Key`. Set it when deployed publicly. |
 | `MAX_VERIFY_ATTEMPTS` | `3` | Wrong account numbers allowed per RequestID before `423`. |
 | `MAX_BANK_ATTEMPTS` | `2` | Wrong bank details allowed per RequestID before `423` (spec `BankAttempts`). |
-| `FMR_STATUS_IN_HTTP` | `true` | `send-form-by-email` only: `true` = HTTP status equals `Status`; `false` = always HTTP 200. |
 | `ACCOUNTS_FILE` | `app/data/accounts.json` | Mock accounts. |
 | `PORT` | `8080` | Docker only. |
 
@@ -77,50 +76,6 @@ HTTP status (from the Swagger): `ValidateExToken` returns the Status as the HTTP
 `mjwtToken` values that simulate outcomes: `invalid` / `expired` → 400, `active-request` → 430, `duplicate` → 432, `no-card` → 436, `session-expired` → the session opens, later calls get 408.
 
 `Permission` comes from the account's `permission_code`: 00 None, 01 FullExecution, 02 InformationOnly, 03 ExecuteTransactionsNoWithdrawal (our guess).
-
-### `POST /api/formemail/send-form-by-email`
-
-Mock of Meitav's `chat-integration-api` form-email endpoint (from the "PROJECT INSAIT - forms" Postman collection). Stand-alone: no `RequestID`/`rjwtToken`. The real API also needs the customer's bearer token plus the `x-ibm-client-id` / `x-ibm-client-secret` gateway headers; the mock ignores them.
-
-Envelope: `{ "email", "formName", "data" }`. `formName` selects the `data` shape:
-
-**`kubiot`** (pension / study-fund enrolment) — the `*2` fields are an optional second product:
-
-```json
-{
-  "email": "customer@example.com",
-  "formName": "kubiot",
-  "data": {
-    "new_filldate": "20/11/2025", "fullName": "ישראל ישראלי", "idNumber": "012345678",
-    "employeName": "מיטב", "HP": "516583036", "monthlyIncome": "3,000",
-    "product": "פנסיה מקיפה", "salaryCategory": "משכורת בסיסית", "ma": "163",
-    "ddovedPayment": "6%", "ddcompensation": "6%", "ddmaasikPayment": "6.5%", "insureIncome": "2,000",
-    "product2": "השתלמות", "salaryCategory2": "משכורת בסיסית", "ma2": "880",
-    "ddovedPayment2": "2.5%", "ddmaasikPayment2": "7.5%", "insureIncome2": "3,000"
-  }
-}
-```
-
-**`nispah5`** (נספח ה׳, end of employment):
-
-```json
-{
-  "email": "customer@example.com",
-  "formName": "nispah5",
-  "data": {
-    "emploeeName": "ישראל ישראלי", "idNumber": "012345678", "maasikName": "מיטב",
-    "HP": "516583036", "product": "מיטב פנסיה מקיפה", "accountNum": "18-012345678"
-  }
-}
-```
-
-Field names (including the typos `employeName` / `emploeeName`) are exactly as in the real API. All values are strings.
-
-→ `200` `{ "Status": 200, "Message": "Form sent by email", "FormName": "kubiot", "ReferenceID": "<uuid>" }`.
-
-- Any email works, except one at `@fail.com` or `@error.com` → `500 FORM_SEND_FAILED`
-- Unknown `formName`, or `data` missing a required field → `400 BAD_REQUEST`
-
 
 ## Identification by bank details (עו"ש)
 
@@ -161,14 +116,6 @@ curl -s $B/AccountVerification -H 'Content-Type: application/json' \
 
 curl -s $B/ResetPassword -H 'Content-Type: application/json' \
   -d "{\"RequestID\":\"$RID\",\"rjwtToken\":\"$RT\",\"SubCard\":\"418\"}"
-```
-
-Form email:
-
-```bash
-curl -s http://localhost:8080/api/formemail/send-form-by-email -H 'Content-Type: application/json' \
-  -d '{"email":"customer@example.com","formName":"nispah5","data":{"emploeeName":"ישראל ישראלי","idNumber":"012345678","maasikName":"מיטב","HP":"516583036","product":"מיטב פנסיה מקיפה","accountNum":"18-012345678"}}'
-# → 200. Use "email":"customer@fail.com" to get 500.
 ```
 
 Add `-H 'X-API-Key: <key>'` if `MOCK_API_KEY` is set.
